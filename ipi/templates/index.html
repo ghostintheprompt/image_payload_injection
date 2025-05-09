@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Payload Injection Analyzer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            background-color: #f8f9fa;
+        }
+        .header-logo {
+            font-size: 2.5rem;
+            margin-right: 10px;
+        }
+        .card {
+            margin-bottom: 1.5rem;
+            box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+        }
+        .risk-high {
+            background-color: #f8d7da;
+            border-left: 5px solid #dc3545;
+        }
+        .risk-medium {
+            background-color: #fff3cd;
+            border-left: 5px solid #ffc107;
+        }
+        .risk-low {
+            background-color: #d1e7dd;
+            border-left: 5px solid #198754;
+        }
+        .threat-item {
+            margin-bottom: 0.5rem;
+            padding: 0.75rem;
+            border-radius: 0.25rem;
+        }
+        .threat-true {
+            background-color: rgba(220, 53, 69, 0.15);
+        }
+        .upload-area {
+            border: 2px dashed #ced4da;
+            border-radius: 5px;
+            padding: 2rem;
+            text-align: center;
+            margin-bottom: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .upload-area:hover {
+            border-color: #6c757d;
+            background-color: #f1f3f5;
+        }
+        .upload-area.dragging {
+            border-color: #0d6efd;
+            background-color: rgba(13, 110, 253, 0.05);
+        }
+        #preview-image {
+            max-width: 100%;
+            max-height: 300px;
+            margin-top: 1rem;
+        }
+        .tab-pane {
+            padding: 1.5rem;
+            background-color: #fff;
+            border: 1px solid #dee2e6;
+            border-top: none;
+            border-radius: 0 0 0.25rem 0.25rem;
+        }
+        .spinner {
+            width: 3rem;
+            height: 3rem;
+        }
+        .hidden {
+            display: none;
+        }
+        .file-info {
+            background-color: #e9ecef;
+            padding: 0.75rem;
+            border-radius: 0.25rem;
+            margin-bottom: 1rem;
+        }
+        .histogram-canvas {
+            max-width: 100%;
+            height: 200px;
+        }
+        .warning-banner {
+            background-color: #dc3545;
+            color: white;
+            padding: 0.5rem;
+            margin-bottom: 1.5rem;
+            border-radius: 0.25rem;
+            font-weight: bold;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="warning-banner">
+            ⚠️ EDUCATIONAL PURPOSES ONLY - FOR SECURITY RESEARCH ⚠️
+        </div>
+        
+        <header class="pb-3 mb-4 border-bottom d-flex align-items-center">
+            <span class="header-logo">🖼️</span>
+            <div>
+                <h1 class="fs-4">Image Payload Injection Analyzer</h1>
+                <p class="text-muted mb-0">Analyze and sanitize images for potentially malicious content</p>
+            </div>
+        </header>
+        
+        <div class="row g-4">
+            <!-- Left Panel -->
+            <div class="col-md-5">
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title h5 mb-0">Upload Image</h2>
+                    </div>
+                    <div class="card-body">
+                        <!-- Upload Area -->
+                        <div id="upload-area" class="upload-area">
+                            <div id="upload-prompt">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" fill="currentColor" class="bi bi-cloud-arrow-up text-muted mb-2" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd" d="M7.646 5.146a.5.5 0 0 1 .708 0l2 2a.5.5 0 0 1-.708.708L8.5 6.707V10.5a.5.5 0 0 1-1 0V6.707L6.354 7.854a.5.5 0 1 1-.708-.708z"/>
+                                    <path d="M4.406 3.342A5.53 5.53 0 0 1 8 2c2.69 0 4.923 2 5.166 4.579C14.758 6.804 16 8.137 16 9.773 16 11.569 14.502 13 12.687 13H3.781C1.708 13 0 11.366 0 9.318c0-1.763 1.266-3.223 2.942-3.593.143-.863.698-1.723 1.464-2.383zm.653.757c-.757.653-1.153 1.44-1.153 2.056v.448l-.445.049C2.064 6.805 1 7.952 1 9.318 1 10.785 2.23 12 3.781 12h8.906C13.98 12 15 10.988 15 9.773c0-1.216-1.02-2.228-2.313-2.228h-.5v-.5C12.188 4.825 10.328 3 8 3a4.53 4.53 0 0 0-2.941 1.1z"/>
+                                </svg>
+                                <h5>Drop image here or click to browse</h5>
+                                <p class="text-muted">Supported formats: PNG, JPEG, GIF, BMP, SVG, WebP, AVIF, TIFF, and RAW</p>
+                            </div>
+                            <input type="file" id="file-input" accept="image/*" class="hidden">
+                            <img id="preview-image" class="hidden">
+                        </div>
+                        
+                        <!-- Progress Bar -->
+                        <div class="progress hidden mb-3" id="upload-progress">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        
+                        <!-- Tabs for Analysis and Sanitization -->
+                        <ul class="nav nav-tabs" id="actionTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="analyze-tab" data-bs-toggle="tab" data-bs-target="#analyze-pane" type="button" role="tab">Analyze</button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="sanitize-tab" data-bs-toggle="tab" data-bs-target="#sanitize-pane" type="button" role="tab">Sanitize</button>
+                            </li>
+                        </ul>
+                        
+                        <div class="tab-content" id="actionTabsContent">
+                            <!-- Analysis Options -->
+                            <div class="tab-pane fade show active" id="analyze-pane" role="tabpanel">
+                                <p>Analyze the image for potentially malicious content.</p>
+                                <button id="analyze-button" class="btn btn-primary" disabled>Analyze Image</button>
+                            </div>
+                            
+                            <!-- Sanitization Options -->
+                            <div class="tab-pane fade" id="sanitize-pane" role="tabpanel">
+                                <div class="mb-3">
+                                    <label class="form-label">Sanitization Options</label>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="remove-metadata" checked>
+                                        <label class="form-check-label" for="remove-metadata">Remove metadata</label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="sanitize-svg" checked>
+                                        <label class="form-check-label" for="sanitize-svg">Sanitize SVG content</label>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="format-conversion" class="form-label">Convert to format</label>
+                                    <select class="form-select" id="format-conversion">
+                                        <option value="" selected>No conversion</option>
+                                        <option value="PNG">PNG</option>
+                                        <option value="JPEG">JPEG</option>
+                                        <option value="WEBP">WebP</option>
+                                        <option value="AVIF">AVIF</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="row mb-3">
+                                    <div class="col-md-6">
+                                        <label for="max-width" class="form-label">Max Width</label>
+                                        <input type="number" class="form-control" id="max-width" placeholder="Optional">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="max-height" class="form-label">Max Height</label>
+                                        <input type="number" class="form-control" id="max-height" placeholder="Optional">
+                                    </div>
+                                </div>
+                                
+                                <button id="sanitize-button" class="btn btn-success" disabled>Sanitize Image</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Batch Processing Card -->
+                <div class="card">
+                    <div class="card-header">
+                        <h2 class="card-title h5 mb-0">Batch Processing</h2>
+                    </div>
+                    <div class="card-body">
+                        <p>Upload multiple images for batch analysis.</p>
+                        <div class="mb-3">
+                            <input class="form-control" type="file" id="batch-file-input" accept="image/*" multiple>
+                        </div>
+                        <button id="batch-analyze-button" class="btn btn-primary" disabled>Analyze All</button>
+                        <div id="batch-file-list" class="mt-3 small"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Panel -->
+            <div class="col-md-7">
+                <!-- Loading Spinner -->
+                <div id="loading-spinner" class="text-center py-5 hidden">
+                    <div class="spinner-border spinner text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2">Processing image...</p>
+                </div>
+                
+                <!-- Results Cards -->
+                <div id="results-area" class="hidden">
+                    <!-- Analysis Results -->
+                    <div id="analysis-results" class="hidden">
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h2 class="card-title h5 mb-0">Analysis Results</h2>
+                                <span id="risk-badge" class="badge"></span>
+                            </div>
+                            <div class="card-body">
+                                <div id="file-info" class="file-info"></div>
+                                <h5 class="mb-3">Security Findings</h5>
+                                <div id="threats-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Sanitization Results -->
+                    <div id="sanitization-results" class="hidden">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2 class="card-title h5 mb-0">Sanitization Results</h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="sanitization-message" class="alert"></div>
+                                <div id="download-area" class="text-center hidden">
+                                    <p>Your sanitized image is ready:</p>
+                                    <a id="download-link" class="btn btn-primary" download>Download Sanitized Image</a>
+                                    <div class="mt-3">
+                                        <img id="sanitized-preview" class="img-fluid rounded" alt="Sanitized Image">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Batch Results -->
+                    <div id="batch-results" class="hidden">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2 class="card-title h5 mb-0">Batch Analysis Results</h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="batch-summary" class="alert alert-info"></div>
+                                <div class="accordion" id="batch-results-accordion"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <footer class="pt-4 mt-5 border-top">
+            <div class="row">
+                <div class="col-12 col-md">
+                    <p class="text-muted">&copy; 2025 Modern Dime Security Research</p>
+                    <p class="text-muted small">FOR EDUCATIONAL PURPOSES ONLY</p>
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Bootstrap & Dependencies -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.0/dist/chart.min.js"></script>
+    
+    <!-- Main JavaScript -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // File Upload Handling
+            const uploadArea = document.getElementById('upload-area');
+            const fileInput = document.getElementById('file-input');
+            const previewImage = document.getElementById('preview-image');
+            const uploadPrompt = document.getElementById('upload-prompt');
+            const analyzeButton = document.getElementById('analyze-button');
+            const sanitizeButton = document.getElementById('sanitize-button');
+            const loadingSpinner = document.getElementById('loading-spinner');
+            const resultsArea = document.getElementById('results-area');
+            const batchFileInput = document.getElementById('batch-file-input');
+            const batchAnalyzeButton = document.getElementById('batch-analyze-button');
+            const batchFileList = document.getElementById('batch-file-list');
+            
+            // Set up drag and drop
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            ['dragenter', 'dragover'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, highlight, false);
+            });
+            
+            ['dragleave', 'drop'].forEach(eventName => {
+                uploadArea.addEventListener(eventName, unhighlight, false);
+            });
+            
+            function highlight() {
+                uploadArea.classList.add('dragging');
+            }
+            
+            function unhighlight() {
+                uploadArea.classList.remove('dragging');
+            }
+            
+            uploadArea.addEventListener('click', () => {
+                fileInput.click();
+            });
+            
+            uploadArea.addEventListener('drop', handleDrop, false);
+            
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                
+                if (files.length > 0) {
+                    handleFiles(files[0]);
+                }
+            }
+            
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    handleFiles(e.target.files[0]);
+                }
+            });
+            
+            function handleFiles(file) {
+                // Reset UI
+                resetResults();
+                
+                // Preview image
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    previewImage.src = e.target.result;
+                    previewImage.classList.remove('hidden');
+                    uploadPrompt.classList.add('hidden');
+                };
+                reader.readAsDataURL(file);
+                
+                // Enable buttons
+                analyzeButton.disabled = false;
+                sanitizeButton.disabled = false;
+            }
+            
+            // Reset results
+            function resetResults() {
+                // Hide results and clear content
+                document.getElementById('analysis-results').classList.add('hidden');
+                document.getElementById('sanitization-results').classList.add('hidden');
+                document.getElementById('file-info').innerHTML = '';
+                document.getElementById('threats-container').innerHTML = '';
+                document.getElementById('sanitization-message').innerHTML = '';
+                document.getElementById('download-area').classList.add('hidden');
+                resultsArea.classList.add('hidden');
+            }
+            
+            // Analyze Image
+            analyzeButton.addEventListener('click', () => {
+                if (fileInput.files.length === 0) return;
+                
+                // Show loading spinner
+                loadingSpinner.classList.remove('hidden');
+                resultsArea.classList.add('hidden');
+                
+                // Create form data
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                
+                // Send request
+                fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide spinner
+                    loadingSpinner.classList.add('hidden');
+                    resultsArea.classList.remove('hidden');
+                    
+                    // Show analysis results
+                    displayAnalysisResults(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    loadingSpinner.classList.add('hidden');
+                    alert('Error analyzing image: ' + error);
+                });
+            });
+            
+            // Display Analysis Results
+            function displayAnalysisResults(data) {
+                const analysisResults = document.getElementById('analysis-results');
+                const fileInfo = document.getElementById('file-info');
+                const threatsContainer = document.getElementById('threats-container');
+                const riskBadge = document.getElementById('risk-badge');
+                
+                // Clear previous results
+                fileInfo.innerHTML = '';
+                threatsContainer.innerHTML = '';
+                
+                // Set risk level badge
+                riskBadge.textContent = data.risk_level;
+                riskBadge.className = 'badge';
+                
+                if (data.risk_level === 'Low') {
+                    riskBadge.classList.add('bg-success');
+                } else if (data.risk_level === 'Medium') {
+                    riskBadge.classList.add('bg-warning');
+                } else if (data.risk_level === 'High') {
+                    riskBadge.classList.add('bg-danger');
+                }
+                
+                // Display file info
+                let fileInfoHtml = '<dl class="row mb-0">';
+                for (const [key, value] of Object.entries(data.file_info)) {
+                    if (key !== 'unique_id') { // Skip unique ID
+                        fileInfoHtml += `<dt class="col-sm-3">${key}</dt><dd class="col-sm-9">${value}</dd>`;
+                    }
+                }
+                fileInfoHtml += '</dl>';
+                fileInfo.innerHTML = fileInfoHtml;
+                
+                // Display threats
+                for (const [threatName, threatInfo] of Object.entries(data.threats)) {
+                    const isDetected = threatInfo[0];
+                    const details = threatInfo[1];
+                    
+                    const threatDiv = document.createElement('div');
+                    threatDiv.className = 'threat-item ' + (isDetected ? 'threat-true' : '');
+                    
+                    const threatTitle = document.createElement('h6');
+                    threatTitle.innerHTML = `${isDetected ? '⚠️ ' : '✅ '}${formatThreatName(threatName)}`;
+                    threatDiv.appendChild(threatTitle);
+                    
+                    if (isDetected && details) {
+                        const detailsText = document.createElement('p');
+                        detailsText.className = 'mb-0 small';
+                        detailsText.textContent = details;
+                        threatDiv.appendChild(detailsText);
+                    }
+                    
+                    threatsContainer.appendChild(threatDiv);
+                }
+                
+                // Show results
+                analysisResults.classList.remove('hidden');
+            }
+            
+            function formatThreatName(threatName) {
+                // Convert snake_case to Title Case
+                return threatName
+                    .split('_')
+                    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                    .join(' ');
+            }
+            
+            // Sanitize Image
+            sanitizeButton.addEventListener('click', () => {
+                if (fileInput.files.length === 0) return;
+                
+                // Show loading spinner
+                loadingSpinner.classList.remove('hidden');
+                resultsArea.classList.add('hidden');
+                
+                // Get options
+                const removeMetadata = document.getElementById('remove-metadata').checked;
+                const sanitizeSvg = document.getElementById('sanitize-svg').checked;
+                const formatConversion = document.getElementById('format-conversion').value;
+                const maxWidth = document.getElementById('max-width').value;
+                const maxHeight = document.getElementById('max-height').value;
+                
+                // Create form data
+                const formData = new FormData();
+                formData.append('file', fileInput.files[0]);
+                formData.append('remove_metadata', removeMetadata);
+                formData.append('sanitize_svg', sanitizeSvg);
+                
+                if (formatConversion) {
+                    formData.append('format_conversion', formatConversion);
+                }
+                
+                if (maxWidth && maxHeight) {
+                    formData.append('max_width', maxWidth);
+                    formData.append('max_height', maxHeight);
+                }
+                
+                // Send request
+                fetch('/sanitize', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide spinner
+                    loadingSpinner.classList.add('hidden');
+                    resultsArea.classList.remove('hidden');
+                    
+                    // Show sanitization results
+                    displaySanitizationResults(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    loadingSpinner.classList.add('hidden');
+                    alert('Error sanitizing image: ' + error);
+                });
+            });
+            
+            // Display Sanitization Results
+            function displaySanitizationResults(data) {
+                const sanitizationResults = document.getElementById('sanitization-results');
+                const sanitizationMessage = document.getElementById('sanitization-message');
+                const downloadArea = document.getElementById('download-area');
+                const downloadLink = document.getElementById('download-link');
+                const sanitizedPreview = document.getElementById('sanitized-preview');
+                
+                // Display message
+                if (data.success) {
+                    sanitizationMessage.innerHTML = `✅ ${data.message}`;
+                    sanitizationMessage.className = 'alert alert-success';
+                    
+                    // Set download link
+                    downloadLink.href = data.download_url;
+                    downloadLink.download = `sanitized_${data.original_filename}`;
+                    
+                    // Preview sanitized image
+                    sanitizedPreview.src = data.download_url;
+                    
+                    // Show download area
+                    downloadArea.classList.remove('hidden');
+                } else {
+                    sanitizationMessage.innerHTML = `❌ ${data.message || data.error}`;
+                    sanitizationMessage.className = 'alert alert-danger';
+                    downloadArea.classList.add('hidden');
+                }
+                
+                // Show results
+                sanitizationResults.classList.remove('hidden');
+            }
+            
+            // Batch Processing
+            batchFileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    batchAnalyzeButton.disabled = false;
+                    
+                    // Display file list
+                    batchFileList.innerHTML = '';
+                    for (let i = 0; i < e.target.files.length; i++) {
+                        const file = e.target.files[i];
+                        batchFileList.innerHTML += `<div>${file.name} (${formatFileSize(file.size)})</div>`;
+                    }
+                } else {
+                    batchAnalyzeButton.disabled = true;
+                    batchFileList.innerHTML = '';
+                }
+            });
+            
+            batchAnalyzeButton.addEventListener('click', () => {
+                if (batchFileInput.files.length === 0) return;
+                
+                // Show loading spinner
+                loadingSpinner.classList.remove('hidden');
+                resultsArea.classList.add('hidden');
+                
+                // Create form data
+                const formData = new FormData();
+                for (let i = 0; i < batchFileInput.files.length; i++) {
+                    formData.append('files[]', batchFileInput.files[i]);
+                }
+                
+                // Send request
+                fetch('/batch_analyze', {
+                    method: 'POST',
+                    body: formData
+                })
+                .then(response => response.json())
+                .then(data => {
+                    // Hide spinner
+                    loadingSpinner.classList.add('hidden');
+                    resultsArea.classList.remove('hidden');
+                    
+                    // Show batch results
+                    displayBatchResults(data);
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    loadingSpinner.classList.add('hidden');
+                    alert('Error analyzing batch: ' + error);
+                });
+            });
+            
+            // Display Batch Results
+            function displayBatchResults(data) {
+                const batchResults = document.getElementById('batch-results');
+                const batchSummary = document.getElementById('batch-summary');
+                const batchAccordion = document.getElementById('batch-results-accordion');
+                
+                // Display summary
+                batchSummary.innerHTML = `Analyzed ${data.file_count} file(s)`;
+                
+                // Clear previous results
+                batchAccordion.innerHTML = '';
+                
+                // Add results for each file
+                let fileIndex = 0;
+                for (const [filename, results] of Object.entries(data.results)) {
+                    const accordionItem = document.createElement('div');
+                    accordionItem.className = 'accordion-item';
+                    
+                    // Create header
+                    const header = document.createElement('h2');
+                    header.className = 'accordion-header';
+                    header.id = `heading-${fileIndex}`;
+                    
+                    const button = document.createElement('button');
+                    button.className = 'accordion-button collapsed';
+                    button.type = 'button';
+                    button.setAttribute('data-bs-toggle', 'collapse');
+                    button.setAttribute('data-bs-target', `#collapse-${fileIndex}`);
+                    button.setAttribute('aria-expanded', 'false');
+                    button.setAttribute('aria-controls', `collapse-${fileIndex}`);
+                    
+                    // Add risk badge if available
+                    if (results.risk_level) {
+                        const riskClass = results.risk_level === 'High' ? 'danger' : 
+                                          results.risk_level === 'Medium' ? 'warning' : 'success';
+                        button.innerHTML = `${filename} <span class="badge bg-${riskClass} ms-2">${results.risk_level}</span>`;
+                    } else if (results.error) {
+                        button.innerHTML = `${filename} <span class="badge bg-danger ms-2">Error</span>`;
+                    } else {
+                        button.textContent = filename;
+                    }
+                    
+                    header.appendChild(button);
+                    accordionItem.appendChild(header);
+                    
+                    // Create content
+                    const collapseDiv = document.createElement('div');
+                    collapseDiv.id = `collapse-${fileIndex}`;
+                    collapseDiv.className = 'accordion-collapse collapse';
+                    collapseDiv.setAttribute('aria-labelledby', `heading-${fileIndex}`);
+                    collapseDiv.setAttribute('data-bs-parent', '#batch-results-accordion');
+                    
+                    const body = document.createElement('div');
+                    body.className = 'accordion-body';
+                    
+                    if (results.error) {
+                        body.innerHTML = `<div class="alert alert-danger">${results.error}</div>`;
+                    } else {
+                        // File info
+                        let fileInfoHtml = '<h6>File Information</h6><dl class="row mb-3">';
+                        for (const [key, value] of Object.entries(results.file_info)) {
+                            if (key !== 'unique_id') { // Skip unique ID
+                                fileInfoHtml += `<dt class="col-sm-3">${key}</dt><dd class="col-sm-9">${value}</dd>`;
+                            }
+                        }
+                        fileInfoHtml += '</dl>';
+                        
+                        // Threats
+                        let threatsHtml = '<h6>Security Findings</h6>';
+                        for (const [threatName, threatInfo] of Object.entries(results.threats)) {
+                            const isDetected = threatInfo[0];
+                            const details = threatInfo[1];
+                            
+                            threatsHtml += `<div class="threat-item ${isDetected ? 'threat-true' : ''}">`;
+                            threatsHtml += `<strong>${isDetected ? '⚠️ ' : '✅ '}${formatThreatName(threatName)}</strong>`;
+                            
+                            if (isDetected && details) {
+                                threatsHtml += `<p class="mb-0 small">${details}</p>`;
+                            }
+                            
+                            threatsHtml += '</div>';
+                        }
+                        
+                        body.innerHTML = fileInfoHtml + threatsHtml;
+                    }
+                    
+                    collapseDiv.appendChild(body);
+                    accordionItem.appendChild(collapseDiv);
+                    batchAccordion.appendChild(accordionItem);
+                    
+                    fileIndex++;
+                }
+                
+                // Show batch results
+                document.getElementById('analysis-results').classList.add('hidden');
+                document.getElementById('sanitization-results').classList.add('hidden');
+                batchResults.classList.remove('hidden');
+            }
+            
+            // Helper function to format file size
+            function formatFileSize(bytes) {
+                if (bytes < 1024) {
+                    return bytes + ' B';
+                } else if (bytes < 1024 * 1024) {
+                    return (bytes / 1024).toFixed(2) + ' KB';
+                } else {
+                    return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+                }
+            }
+        });
+    </script>
+</body>
+</html>
