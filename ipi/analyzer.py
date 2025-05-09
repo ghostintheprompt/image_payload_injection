@@ -23,9 +23,11 @@ import logging
 import argparse
 import tempfile
 import subprocess
+import threading
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Tuple, List, Optional, Any, Union
+from typing import Dict, Tuple, List, Optional, Any, Union, BinaryIO
 
 # Try to import optional dependencies
 try:
@@ -64,7 +66,7 @@ except ImportError:
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levellevelname)s - %(message)s',
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(sys.stdout)
     ]
@@ -73,6 +75,7 @@ logger = logging.getLogger('image-analyzer')
 
 # Define constants
 TEMP_DIR = tempfile.gettempdir()
+MAX_CHUNK_SIZE = 4 * 1024 * 1024  # 4MB chunks for stream processing
 
 # Recognized RAW file extensions
 RAW_EXTENSIONS = {
@@ -105,16 +108,9 @@ class ImageSecurityAnalyzer:
         """
         self.image_path = os.path.abspath(image_path)
         self.verbose = verbose
-        self.image_data = None
         self.file_extension = os.path.splitext(image_path)[1].lower()
-        
-        # Load image data
-        try:
-            with open(self.image_path, 'rb') as f:
-                self.image_data = f.read()
-        except Exception as e:
-            logger.error(f"Failed to read image file: {str(e)}")
-            self.image_data = None
+        self.file_size = os.path.getsize(image_path)
+        self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         
         # Initialize results structure
         self.results = {
@@ -130,33 +126,58 @@ class ImageSecurityAnalyzer:
         Returns:
             Dict: Analysis results
         """
-        if self.image_data is None:
+        if not os.path.exists(self.image_path):
             self.results['risk_level'] = 'Error'
+            logger.error(f"File does not exist: {self.image_path}")
             return self.results
         
-        # Get basic file information
-        self._get_file_info()
-        
-        # Run all detection methods
-        self._detect_trailing_data()
-        self._detect_suspicious_metadata()
-        self._detect_steganography()
-        self._detect_format_exploits()
-        
-        # Format-specific checks
-        if self.file_extension == '.png':
-            self._detect_suspicious_chunks()
-        elif self.file_extension == '.svg':
-            self._detect_svg_javascript()
-        elif self.file_extension in RAW_EXTENSIONS:
-            self._analyze_raw_file()
-        
-        # Advanced analysis techniques
-        self._analyze_color_histograms()
-        self._perform_ml_analysis()
-        
-        # Determine overall risk level
-        self._determine_risk_level()
+        try:
+            # Get basic file information
+            self._get_file_info()
+            
+            # Analyze file in streaming mode when possible
+            with open(self.image_path, 'rb') as f:
+                # Detect format-based exploits (needs full file scan)
+                self._detect_format_exploits(f)
+                
+                # Reset file pointer for other scans
+                f.seek(0)
+                
+                # Detect trailing data
+                self._detect_trailing_data(f)
+            
+            # Run detection methods that require specific libraries
+            detection_futures = []
+            
+            # Start metadata detection in parallel
+            detection_futures.append(self.thread_pool.submit(self._detect_suspicious_metadata))
+            
+            # Format-specific checks (can run in parallel)
+            if self.file_extension == '.png':
+                detection_futures.append(self.thread_pool.submit(self._detect_suspicious_chunks))
+            elif self.file_extension == '.svg':
+                detection_futures.append(self.thread_pool.submit(self._detect_svg_javascript))
+            elif self.file_extension in RAW_EXTENSIONS:
+                detection_futures.append(self.thread_pool.submit(self._analyze_raw_file))
+            
+            # Advanced analysis techniques (can be run in parallel)
+            detection_futures.append(self.thread_pool.submit(self._detect_steganography))
+            detection_futures.append(self.thread_pool.submit(self._analyze_color_histograms))
+            detection_futures.append(self.thread_pool.submit(self._perform_ml_analysis))
+            
+            # Wait for all detection methods to complete
+            for future in concurrent.futures.as_completed(detection_futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    logger.error(f"Error in detection method: {str(e)}")
+            
+            # Determine overall risk level
+            self._determine_risk_level()
+            
+        except Exception as e:
+            logger.error(f"Analysis error: {str(e)}")
+            self.results['risk_level'] = 'Error'
         
         return self.results
 
@@ -166,7 +187,7 @@ class ImageSecurityAnalyzer:
         """
         file_info = {
             'filename': os.path.basename(self.image_path),
-            'size': os.path.getsize(self.image_path),
+            'size': self.file_size,
             'last_modified': datetime.fromtimestamp(
                 os.path.getmtime(self.image_path)
             ).strftime('%Y-%m-%d %H:%M:%S')
@@ -174,7 +195,11 @@ class ImageSecurityAnalyzer:
         
         # Get MIME type if python-magic is available
         if MAGIC_AVAILABLE:
-            file_info['mime'] = magic.Magic(mime=True).from_buffer(self.image_data)
+            try:
+                file_info['mime'] = magic.Magic(mime=True).from_file(self.image_path)
+            except Exception as e:
+                if self.verbose:
+                    logger.warning(f"Failed to get MIME type: {str(e)}")
         
         # Get image dimensions if Pillow is available
         if PILLOW_AVAILABLE:
@@ -189,58 +214,121 @@ class ImageSecurityAnalyzer:
         
         self.results['file_info'] = file_info
 
-    def _detect_trailing_data(self) -> None:
+    def _detect_trailing_data(self, file_handle: BinaryIO) -> None:
         """
         Detect data appended after the image's end marker
         """
         has_trailing = False
         trailing_data = None
         
-        # Check for PNG
-        if self.image_data.startswith(b'\x89PNG'):
-            iend_pos = self.image_data.rfind(b'IEND')
-            if iend_pos != -1:
-                end_pos = iend_pos + 8  # IEND chunk + CRC (4 + 4 bytes)
-                if len(self.image_data) > end_pos:
-                    has_trailing = True
-                    trailing_data = self.image_data[end_pos:]
-        
-        # Check for JPEG
-        elif self.image_data.startswith(b'\xff\xd8'):
-            eoi_pos = self.image_data.rfind(b'\xff\xd9')
-            if eoi_pos != -1 and eoi_pos + 2 < len(self.image_data):
-                has_trailing = True
-                trailing_data = self.image_data[eoi_pos + 2:]
-        
-        # Check for GIF
-        elif self.image_data.startswith(b'GIF'):
-            # GIF trailer is 0x3B (;)
-            trailer_pos = self.image_data.rfind(b'\x3b')
-            if trailer_pos != -1 and trailer_pos + 1 < len(self.image_data):
-                has_trailing = True
-                trailing_data = self.image_data[trailer_pos + 1:]
-        
-        details = None
-        if has_trailing:
-            # Analyze trailing data
-            details = f"Found {len(trailing_data)} bytes after EOF marker"
+        try:
+            # Read first few bytes to determine file type
+            file_handle.seek(0)
+            header = file_handle.read(8)
+            file_handle.seek(0)
             
-            # Check for executable signatures in trailing data
-            exe_signatures = [
-                (b'MZ', 'DOS/Windows executable'),
-                (b'\x7fELF', 'Linux executable'),
-                (b'\xca\xfe\xba\xbe', 'Mach-O binary'),
-                (b'\x50\x4b\x03\x04', 'ZIP/JAR/APK'),
-                (b'<%', 'Script (possibly PHP)'),
-                (b'<script', 'JavaScript')
-            ]
+            # Check for PNG
+            if header.startswith(b'\x89PNG'):
+                # Stream through file looking for IEND chunk
+                chunk_data = file_handle.read(MAX_CHUNK_SIZE)
+                file_pos = 0
+                
+                while chunk_data:
+                    iend_pos = chunk_data.rfind(b'IEND')
+                    if iend_pos != -1:
+                        # Found IEND, check if there's data after it
+                        end_pos = file_pos + iend_pos + 8  # IEND chunk + CRC (4 + 4 bytes)
+                        file_handle.seek(end_pos)
+                        trailing_bytes = file_handle.read()
+                        if trailing_bytes:
+                            has_trailing = True
+                            trailing_data = trailing_bytes
+                        break
+                    
+                    # Continue reading
+                    file_pos += len(chunk_data) - 3  # Overlap by 3 bytes to catch split markers
+                    file_handle.seek(file_pos)
+                    chunk_data = file_handle.read(MAX_CHUNK_SIZE)
+                    if not chunk_data:
+                        break
             
-            for sig, desc in exe_signatures:
-                if trailing_data.startswith(sig) or sig in trailing_data[:100]:
-                    details += f". Possible {desc} detected"
-                    break
+            # Check for JPEG
+            elif header.startswith(b'\xff\xd8'):
+                # Stream through file looking for EOI marker
+                file_handle.seek(0)
+                chunk_data = file_handle.read(MAX_CHUNK_SIZE)
+                file_pos = 0
+                
+                while chunk_data:
+                    eoi_pos = chunk_data.rfind(b'\xff\xd9')
+                    if eoi_pos != -1:
+                        # Found EOI, check if there's data after it
+                        end_pos = file_pos + eoi_pos + 2
+                        file_handle.seek(end_pos)
+                        trailing_bytes = file_handle.read()
+                        if trailing_bytes:
+                            has_trailing = True
+                            trailing_data = trailing_bytes
+                        break
+                    
+                    # Continue reading
+                    file_pos += len(chunk_data) - 1  # Overlap by 1 byte to catch split markers
+                    file_handle.seek(file_pos)
+                    chunk_data = file_handle.read(MAX_CHUNK_SIZE)
+                    if not chunk_data:
+                        break
+            
+            # Check for GIF
+            elif header.startswith(b'GIF'):
+                # GIF trailer is 0x3B (;)
+                file_handle.seek(0)
+                chunk_data = file_handle.read(MAX_CHUNK_SIZE)
+                file_pos = 0
+                
+                while chunk_data:
+                    trailer_pos = chunk_data.rfind(b'\x3b')
+                    if trailer_pos != -1:
+                        # Found trailer, check if there's data after it
+                        end_pos = file_pos + trailer_pos + 1
+                        file_handle.seek(end_pos)
+                        trailing_bytes = file_handle.read()
+                        if trailing_bytes:
+                            has_trailing = True
+                            trailing_data = trailing_bytes
+                        break
+                    
+                    # Continue reading
+                    file_pos += len(chunk_data) - 1  # Overlap by 1 byte
+                    file_handle.seek(file_pos)
+                    chunk_data = file_handle.read(MAX_CHUNK_SIZE)
+                    if not chunk_data:
+                        break
         
-        self.results['threats']['trailing_data'] = (has_trailing, details)
+            details = None
+            if has_trailing:
+                # Analyze trailing data
+                details = f"Found {len(trailing_data)} bytes after EOF marker"
+                
+                # Check for executable signatures in trailing data
+                exe_signatures = [
+                    (b'MZ', 'DOS/Windows executable'),
+                    (b'\x7fELF', 'Linux executable'),
+                    (b'\xca\xfe\xba\xbe', 'Mach-O binary'),
+                    (b'\x50\x4b\x03\x04', 'ZIP/JAR/APK'),
+                    (b'<%', 'Script (possibly PHP)'),
+                    (b'<script', 'JavaScript')
+                ]
+                
+                for sig, desc in exe_signatures:
+                    if trailing_data.startswith(sig) or sig in trailing_data[:min(100, len(trailing_data))]:
+                        details += f". Possible {desc} detected"
+                        break
+            
+            self.results['threats']['trailing_data'] = (has_trailing, details)
+        
+        except Exception as e:
+            logger.error(f"Error in trailing data detection: {str(e)}")
+            self.results['threats']['trailing_data'] = (False, f"Error: {str(e)}")
 
     def _detect_suspicious_metadata(self) -> None:
         """
@@ -249,138 +337,182 @@ class ImageSecurityAnalyzer:
         suspicious = False
         details = None
         
-        if PILLOW_AVAILABLE:
-            try:
-                with Image.open(self.image_path) as img:
-                    # Extract metadata
-                    metadata = {}
-                    
-                    # Get EXIF data for JPEG
-                    if hasattr(img, '_getexif') and img._getexif():
-                        exif = img._getexif()
-                        for tag, value in exif.items():
-                            if tag in ExifTags.TAGS:
-                                metadata[ExifTags.TAGS[tag]] = value
-                    
-                    # Get PNG text chunks
-                    if hasattr(img, 'text'):
-                        for k, v in img.text.items():
-                            metadata[f"PNG:{k}"] = v
-                    
-                    # Check for suspicious patterns
-                    suspicious_patterns = [
-                        (r'(?i)script', 'Script reference'),
-                        (r'(?i)exec', 'Execution reference'),
-                        (r'(?i)eval', 'Evaluation function'),
-                        (r'(?i)<.*>', 'HTML/XML tags'),
-                        (r'(?i)data:', 'Data URI'),
-                        (r'(?i)0x[0-9a-f]{6,}', 'Long hex sequence'),
-                        (r'(?i)http', 'URL reference'),
-                        (r'(?i)\\x[0-9a-f]{2}', 'Hex escape sequences')
-                    ]
-                    
-                    matches = []
-                    
-                    for k, v in metadata.items():
-                        if isinstance(v, (str, bytes)):
-                            v_str = v if isinstance(v, str) else v.decode('utf-8', errors='ignore')
-                            for pattern, desc in suspicious_patterns:
-                                if re.search(pattern, v_str):
-                                    suspicious = True
-                                    matches.append(f"{desc} in {k}")
-                    
-                    if suspicious:
-                        details = f"Suspicious content in metadata: {', '.join(matches)}"
-            
-            except Exception as e:
-                if self.verbose:
-                    logger.warning(f"Failed to analyze metadata: {str(e)}")
-        
-        # Try with exiftool if available
-        if not suspicious and not details:
-            try:
-                output = subprocess.check_output(
-                    ['exiftool', self.image_path], 
-                    universal_newlines=True
-                )
-                
-                # Define patterns of concern
-                patterns = [
-                    r'(?i)script',
-                    r'(?i)exec',
-                    r'(?i)eval',
-                    r'(?i)<.*>',  # Potential HTML/XML/script tags
-                    r'(?i)data:',  # Data URIs
-                    r'(?i)0x[0-9a-f]{6,}',  # Long hex sequences
-                ]
-                
-                for pattern in patterns:
-                    matches = re.findall(pattern, output)
-                    if matches:
-                        suspicious = True
-                        details = f"Suspicious pattern '{pattern}' found in metadata"
-                        break
+        try:
+            if PILLOW_AVAILABLE:
+                try:
+                    with Image.open(self.image_path) as img:
+                        # Extract metadata
+                        metadata = {}
                         
-            except Exception as e:
-                if self.verbose:
-                    logger.warning(f"Failed to run exiftool: {str(e)}")
+                        # Get EXIF data for JPEG
+                        if hasattr(img, '_getexif') and img._getexif():
+                            exif = img._getexif()
+                            if exif:  # Check if exif is not None
+                                for tag, value in exif.items():
+                                    if tag in ExifTags.TAGS:
+                                        metadata[ExifTags.TAGS[tag]] = value
+                        
+                        # Get PNG text chunks
+                        if hasattr(img, 'text') and img.text:
+                            for k, v in img.text.items():
+                                metadata[f"PNG:{k}"] = v
+                        
+                        # Check for suspicious patterns
+                        suspicious_patterns = [
+                            (r'(?i)script', 'Script reference'),
+                            (r'(?i)exec', 'Execution reference'),
+                            (r'(?i)eval', 'Evaluation function'),
+                            (r'(?i)<.*>', 'HTML/XML tags'),
+                            (r'(?i)data:', 'Data URI'),
+                            (r'(?i)0x[0-9a-f]{6,}', 'Long hex sequence'),
+                            (r'(?i)http', 'URL reference'),
+                            (r'(?i)\\x[0-9a-f]{2}', 'Hex escape sequences')
+                        ]
+                        
+                        matches = []
+                        
+                        for k, v in metadata.items():
+                            if isinstance(v, (str, bytes)):
+                                v_str = v if isinstance(v, str) else v.decode('utf-8', errors='ignore')
+                                for pattern, desc in suspicious_patterns:
+                                    if re.search(pattern, v_str):
+                                        suspicious = True
+                                        matches.append(f"{desc} in {k}")
+                        
+                        if suspicious:
+                            details = f"Suspicious content in metadata: {', '.join(matches)}"
+                
+                except Exception as e:
+                    if self.verbose:
+                        logger.warning(f"Failed to analyze metadata: {str(e)}")
+            
+            # Try with exiftool if available (with retry mechanism)
+            if not suspicious and not details:
+                retries = 2
+                while retries > 0:
+                    try:
+                        output = subprocess.check_output(
+                            ['exiftool', self.image_path], 
+                            universal_newlines=True,
+                            timeout=30  # Add timeout to prevent hanging
+                        )
+                        
+                        # Define patterns of concern
+                        patterns = [
+                            r'(?i)script',
+                            r'(?i)exec',
+                            r'(?i)eval',
+                            r'(?i)<.*>',  # Potential HTML/XML/script tags
+                            r'(?i)data:',  # Data URIs
+                            r'(?i)0x[0-9a-f]{6,}',  # Long hex sequences
+                        ]
+                        
+                        for pattern in patterns:
+                            matches = re.findall(pattern, output)
+                            if matches:
+                                suspicious = True
+                                details = f"Suspicious pattern '{pattern}' found in metadata"
+                                break
+                        break  # Success, exit retry loop
+                            
+                    except subprocess.TimeoutExpired:
+                        retries -= 1
+                        if retries == 0:
+                            logger.warning(f"exiftool timed out for {self.image_path}")
+                    except Exception as e:
+                        if self.verbose:
+                            logger.warning(f"Failed to run exiftool: {str(e)}")
+                        break
+        
+        except Exception as e:
+            logger.error(f"Error in metadata detection: {str(e)}")
         
         self.results['threats']['suspicious_metadata'] = (suspicious, details)
 
     def _detect_steganography(self) -> None:
         """
-        Detect potential steganography in the image
+        Detect potential steganography in the image using multi-threaded analysis
         """
         suspicious = False
         details = None
         
-        if PILLOW_AVAILABLE and OPENCV_AVAILABLE and NUMPY_AVAILABLE:
+        if PILLOW_AVAILABLE and OPENCV_AVAILABLE and 'numpy' in sys.modules:
             try:
                 # LSB analysis
                 img = cv2.imread(self.image_path)
                 if img is not None:
-                    # Extract LSBs from each channel
-                    blue_lsb = img[:,:,0] & 1
-                    green_lsb = img[:,:,1] & 1
-                    red_lsb = img[:,:,2] & 1
+                    results = {}
                     
-                    # Calculate LSB distribution for each channel
-                    blue_ratio = np.sum(blue_lsb) / blue_lsb.size
-                    green_ratio = np.sum(green_lsb) / green_lsb.size
-                    red_ratio = np.sum(red_lsb) / red_lsb.size
+                    # Create separate threads for each color channel analysis
+                    futures = {
+                        'blue': self.thread_pool.submit(self._analyze_channel_lsb, img[:,:,0]),
+                        'green': self.thread_pool.submit(self._analyze_channel_lsb, img[:,:,1]),
+                        'red': self.thread_pool.submit(self._analyze_channel_lsb, img[:,:,2])
+                    }
                     
-                    # Check for suspicious distribution (should be close to 0.5 for random data)
-                    threshold = 0.05  # 5% deviation from expected 0.5
+                    # Gather results
+                    for channel, future in futures.items():
+                        try:
+                            ratio, entropy = future.result()
+                            results[channel] = {'ratio': ratio, 'entropy': entropy}
+                        except Exception as e:
+                            logger.warning(f"Error analyzing {channel} channel: {str(e)}")
                     
-                    if (abs(blue_ratio - 0.5) > threshold or 
-                        abs(green_ratio - 0.5) > threshold or 
-                        abs(red_ratio - 0.5) > threshold):
-                        suspicious = True
-                        details = f"Suspicious LSB distribution: R={red_ratio:.4f}, G={green_ratio:.4f}, B={blue_ratio:.4f}"
-                    
-                    # Check for pattern regularity in LSBs
-                    # High correlation between adjacent LSBs can indicate natural image
-                    # Low correlation might indicate hidden data
-                    blue_entropy = self._calculate_bit_entropy(blue_lsb)
-                    green_entropy = self._calculate_bit_entropy(green_lsb)
-                    red_entropy = self._calculate_bit_entropy(red_lsb)
-                    
-                    # High entropy (close to 1.0) suggests hidden data
-                    high_entropy_threshold = 0.97
-                    if (blue_entropy > high_entropy_threshold or 
-                        green_entropy > high_entropy_threshold or 
-                        red_entropy > high_entropy_threshold):
-                        suspicious = True
-                        if details:
-                            details += f". High bit entropy: R={red_entropy:.4f}, G={green_entropy:.4f}, B={blue_entropy:.4f}"
-                        else:
-                            details = f"High bit entropy suggests hidden data: R={red_entropy:.4f}, G={green_entropy:.4f}, B={blue_entropy:.4f}"
+                    # Analyze results
+                    if results:
+                        # Check for suspicious distribution (should be close to 0.5 for random data)
+                        threshold = 0.05  # 5% deviation from expected 0.5
+                        high_entropy_threshold = 0.97
+                        
+                        abnormal_distribution = False
+                        high_entropy_detected = False
+                        
+                        for channel, data in results.items():
+                            if abs(data['ratio'] - 0.5) > threshold:
+                                abnormal_distribution = True
+                            if data['entropy'] > high_entropy_threshold:
+                                high_entropy_detected = True
+                        
+                        if abnormal_distribution:
+                            suspicious = True
+                            details = f"Suspicious LSB distribution: "
+                            details += ", ".join([f"{ch.upper()}={data['ratio']:.4f}" 
+                                                for ch, data in results.items()])
+                        
+                        if high_entropy_detected:
+                            suspicious = True
+                            if details:
+                                details += f". High bit entropy: "
+                            else:
+                                details = f"High bit entropy suggests hidden data: "
+                            details += ", ".join([f"{ch.upper()}={data['entropy']:.4f}" 
+                                               for ch, data in results.items()])
             
             except Exception as e:
-                if self.verbose:
-                    logger.warning(f"Failed to perform steganography detection: {str(e)}")
+                logger.error(f"Failed to perform steganography detection: {str(e)}")
         
         self.results['threats']['steganography'] = (suspicious, details)
+    
+    def _analyze_channel_lsb(self, channel: np.ndarray) -> Tuple[float, float]:
+        """
+        Analyze LSB distribution and entropy for a single color channel
+        
+        Args:
+            channel (np.ndarray): The color channel to analyze
+            
+        Returns:
+            Tuple[float, float]: (ratio, entropy) - LSB distribution ratio and entropy
+        """
+        # Extract LSBs
+        lsb = channel & 1
+        
+        # Calculate distribution ratio
+        ratio = np.sum(lsb) / lsb.size
+        
+        # Calculate entropy
+        entropy = self._calculate_bit_entropy(lsb)
+        
+        return ratio, entropy
     
     def _calculate_bit_entropy(self, bit_plane: np.ndarray) -> float:
         """
@@ -406,111 +538,128 @@ class ImageSecurityAnalyzer:
         # Normalize to [0, 1]
         return entropy / 1.0  # Max entropy for binary data is 1.0
 
-    def _detect_format_exploits(self) -> None:
+    def _detect_format_exploits(self, file_handle: BinaryIO) -> None:
         """
         Detect potential format-based exploits (polyglot files)
         """
         suspicious = False
         details = None
         
-        # Define common file signatures
-        file_signatures = {
-            b'MZ': 'DOS/Windows executable',
-            b'\x7fELF': 'Linux executable',
-            b'\xca\xfe\xba\xbe': 'Mach-O binary',
-            b'PK\x03\x04': 'ZIP archive',
-            b'%PDF': 'PDF document',
-            b'\x1f\x8b\x08': 'GZIP archive',
-            b'BZh': 'BZIP2 archive',
-            b'7z\xbc\xaf\x27\x1c': '7-Zip archive',
-            b'Rar!\x1a\x07': 'RAR archive',
-            b'wOFF': 'WOFF font file',
-            b'<!DOCTYPE html': 'HTML document',
-            b'<svg': 'SVG image',
-            b'\xd0\xcf\x11\xe0': 'MS Office document',
-            b'\x25\x21\x50\x53': 'PostScript file',
-            b'\x00\x01\x00\x00\x00': 'TrueType font'
-        }
-        
-        # Check for multiple file signatures
-        detected_formats = []
-        
-        # Get expected format based on file extension
-        expected_format = None
-        if self.file_extension == '.png':
-            expected_format = 'PNG image'
-        elif self.file_extension in ['.jpg', '.jpeg']:
-            expected_format = 'JPEG image'
-        elif self.file_extension == '.gif':
-            expected_format = 'GIF image'
-        elif self.file_extension == '.bmp':
-            expected_format = 'BMP image'
-        elif self.file_extension == '.svg':
-            expected_format = 'SVG image'
-        elif self.file_extension == '.webp':
-            expected_format = 'WebP image'
-        elif self.file_extension in RAW_EXTENSIONS:
-            expected_format = f"{RAW_EXTENSIONS[self.file_extension]} RAW image"
-        
-        # Check each signature
-        for signature, format_name in file_signatures.items():
-            start_pos = 0
-            while True:
-                pos = self.image_data.find(signature, start_pos)
-                if pos == -1 or pos > min(len(self.image_data), 4096):  # Check only first 4KB
-                    break
-                
-                # Skip expected format signature at beginning
-                if pos == 0 and expected_format and expected_format.lower() in format_name.lower():
-                    start_pos = pos + len(signature)
-                    continue
-                
-                detected_formats.append((pos, format_name))
-                start_pos = pos + len(signature)
-        
-        # Remove duplicates and sort by position
-        detected_formats = sorted(set(detected_formats), key=lambda x: x[0])
-        
-        if len(detected_formats) > 0:
-            suspicious = True
-            format_list = [f"{fmt} at offset {pos}" for pos, fmt in detected_formats]
-            details = f"Multiple format signatures detected: {', '.join(format_list)}"
-        
-        # Try with binwalk if available
-        if not suspicious:
-            try:
-                output = subprocess.check_output(
-                    ['binwalk', self.image_path], 
-                    universal_newlines=True
-                )
-                
-                # Look for unexpected formats
-                formats = []
-                format_patterns = [
-                    'executable',
-                    'archive',
-                    'filesystem',
-                    'encryption',
-                    'certificate',
-                    'compressed',
-                    'relocatable',
-                    'script',
-                    'PDF',
-                    'HTML',
-                    'XML'
-                ]
-                
-                for pattern in format_patterns:
-                    if re.search(pattern, output, re.IGNORECASE):
-                        formats.append(pattern)
-                
-                if formats:
-                    suspicious = True
-                    details = f"Unexpected data formats detected with binwalk: {', '.join(formats)}"
+        try:
+            # Define common file signatures
+            file_signatures = {
+                b'MZ': 'DOS/Windows executable',
+                b'\x7fELF': 'Linux executable',
+                b'\xca\xfe\xba\xbe': 'Mach-O binary',
+                b'PK\x03\x04': 'ZIP archive',
+                b'%PDF': 'PDF document',
+                b'\x1f\x8b\x08': 'GZIP archive',
+                b'BZh': 'BZIP2 archive',
+                b'7z\xbc\xaf\x27\x1c': '7-Zip archive',
+                b'Rar!\x1a\x07': 'RAR archive',
+                b'wOFF': 'WOFF font file',
+                b'<!DOCTYPE html': 'HTML document',
+                b'<svg': 'SVG image',
+                b'\xd0\xcf\x11\xe0': 'MS Office document',
+                b'\x25\x21\x50\x53': 'PostScript file',
+                b'\x00\x01\x00\x00\x00': 'TrueType font'
+            }
             
-            except Exception as e:
-                if self.verbose:
-                    logger.warning(f"Failed to run binwalk: {str(e)}")
+            # Get expected format based on file extension
+            expected_format = None
+            if self.file_extension == '.png':
+                expected_format = 'PNG image'
+            elif self.file_extension in ['.jpg', '.jpeg']:
+                expected_format = 'JPEG image'
+            elif self.file_extension == '.gif':
+                expected_format = 'GIF image'
+            elif self.file_extension == '.bmp':
+                expected_format = 'BMP image'
+            elif self.file_extension == '.svg':
+                expected_format = 'SVG image'
+            elif self.file_extension == '.webp':
+                expected_format = 'WebP image'
+            elif self.file_extension in RAW_EXTENSIONS:
+                expected_format = f"{RAW_EXTENSIONS[self.file_extension]} RAW image"
+            
+            # Scan file in chunks looking for signatures
+            detected_formats = []
+            
+            # Read file in chunks
+            file_handle.seek(0)
+            
+            # Only scan first 32KB for signatures
+            scan_size = min(32 * 1024, self.file_size)
+            file_content = file_handle.read(scan_size)
+            
+            # Check each signature
+            for signature, format_name in file_signatures.items():
+                start_pos = 0
+                while True:
+                    pos = file_content.find(signature, start_pos)
+                    if pos == -1:
+                        break
+                    
+                    # Skip expected format signature at beginning
+                    if pos == 0 and expected_format and expected_format.lower() in format_name.lower():
+                        start_pos = pos + len(signature)
+                        continue
+                    
+                    detected_formats.append((pos, format_name))
+                    start_pos = pos + len(signature)
+            
+            # Remove duplicates and sort by position
+            detected_formats = sorted(set(detected_formats), key=lambda x: x[0])
+            
+            if len(detected_formats) > 0:
+                suspicious = True
+                format_list = [f"{fmt} at offset {pos}" for pos, fmt in detected_formats]
+                details = f"Multiple format signatures detected: {', '.join(format_list)}"
+            
+            # Try with binwalk if available
+            if not suspicious:
+                try:
+                    output = subprocess.check_output(
+                        ['binwalk', '--no-color', self.image_path], 
+                        universal_newlines=True,
+                        timeout=30  # Add timeout to prevent hanging
+                    )
+                    
+                    # Look for unexpected formats
+                    formats = []
+                    format_patterns = [
+                        'executable',
+                        'archive',
+                        'filesystem',
+                        'encryption',
+                        'certificate',
+                        'compressed',
+                        'relocatable',
+                        'script',
+                        'PDF',
+                        'HTML',
+                        'XML'
+                    ]
+                    
+                    for pattern in format_patterns:
+                        if re.search(r'\b' + pattern + r'\b', output, re.IGNORECASE):
+                            formats.append(pattern)
+                    
+                    if formats:
+                        suspicious = True
+                        details = f"Unexpected data formats detected with binwalk: {', '.join(formats)}"
+                
+                except (subprocess.TimeoutExpired, subprocess.SubprocessError) as e:
+                    logger.warning(f"Binwalk error: {str(e)}")
+                except FileNotFoundError:
+                    if self.verbose:
+                        logger.warning("Binwalk not found, skipping advanced format detection")
+                except Exception as e:
+                    if self.verbose:
+                        logger.warning(f"Failed to run binwalk: {str(e)}")
+        
+        except Exception as e:
+            logger.error(f"Error in format exploit detection: {str(e)}")
         
         self.results['threats']['format_exploits'] = (suspicious, details)
 
