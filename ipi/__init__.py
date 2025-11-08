@@ -61,13 +61,19 @@ def check_dependencies() -> Dict[str, bool]:
     return status
 
 # Make core modules available at package level
+# Import with error handling to make the package robust
+ImageAnalyzer = None
+ImageSanitizer = None
+
 try:
-    from .analyzer import ImageSecurityAnalyzer
-    from .detector import PayloadDetector
-    from .injector import PayloadInjector
-    from .utils import FileUtils
+    from .analyzer import ImageSecurityAnalyzer as ImageAnalyzer
 except ImportError as e:
-    logger.error(f"Error importing core modules: {e}")
+    logger.debug(f"Could not import ImageAnalyzer: {e}")
+
+try:
+    from .sanitizer import ImageSanitizer
+except ImportError as e:
+    logger.debug(f"Could not import ImageSanitizer: {e}")
 
 # Run dependency check on import
 dependency_status = check_dependencies()

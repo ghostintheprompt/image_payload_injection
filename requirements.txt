@@ -2,6 +2,10 @@
 pillow>=9.0.0
 python-magic>=0.4.24
 
+# Web framework
+flask>=2.3.0
+werkzeug>=2.3.0
+
 # Image processing and analysis
 numpy>=1.20.0
 opencv-python>=4.5.0

@@ -27,7 +27,10 @@ import threading
 import concurrent.futures
 from pathlib import Path
 from datetime import datetime
-from typing import Dict, Tuple, List, Optional, Any, Union, BinaryIO
+from typing import Dict, Tuple, List, Optional, Any, Union, BinaryIO, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import numpy as np
 
 # Try to import optional dependencies
 try:
@@ -493,7 +496,7 @@ class ImageSecurityAnalyzer:
         
         self.results['threats']['steganography'] = (suspicious, details)
     
-    def _analyze_channel_lsb(self, channel: np.ndarray) -> Tuple[float, float]:
+    def _analyze_channel_lsb(self, channel: "np.ndarray") -> Tuple[float, float]:
         """
         Analyze LSB distribution and entropy for a single color channel
         
@@ -514,7 +517,7 @@ class ImageSecurityAnalyzer:
         
         return ratio, entropy
     
-    def _calculate_bit_entropy(self, bit_plane: np.ndarray) -> float:
+    def _calculate_bit_entropy(self, bit_plane: "np.ndarray") -> float:
         """
         Calculate Shannon entropy of a bit plane
         
