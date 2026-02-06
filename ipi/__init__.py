@@ -5,10 +5,10 @@ This package provides tools for analyzing, detecting, and demonstrating
 image-based security vulnerabilities and payload injection techniques.
 """
 
-__version__ = "1.0.0"
-__author__ = "Modern Dime Security"
+__version__ = "1.1.0"
+__author__ = "Ghost in the Prompt"
 __license__ = "MIT"
-__copyright__ = "Copyright 2025 Modern Dime"
+__copyright__ = "Copyright 2026 Ghost in the Prompt"
 
 import logging
 import sys
