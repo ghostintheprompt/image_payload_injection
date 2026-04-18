@@ -550,8 +550,129 @@ class Image_Payload_Scanner {
     }
 }
 
+    /**
+     * Fetch the Security Integrity Score from /api/v1/security-score.
+     *
+     * Returns an array:
+     *   ['score' => int, 'tier' => string, 'threats_found' => int]
+     * or false on API failure.
+     */
+    private function get_security_integrity_score($file_path) {
+        $api_endpoint = get_option('ips_api_endpoint', 'http://localhost:5000');
+
+        $boundary = wp_generate_password(24, false);
+        $file_contents = file_get_contents($file_path);
+        if ($file_contents === false) {
+            return false;
+        }
+
+        $body  = "--{$boundary}\r\n";
+        $body .= 'Content-Disposition: form-data; name="file"; filename="' . basename($file_path) . '"' . "\r\n";
+        $body .= "Content-Type: application/octet-stream\r\n\r\n";
+        $body .= $file_contents . "\r\n";
+        $body .= "--{$boundary}--\r\n";
+
+        $response = wp_remote_post($api_endpoint . '/api/v1/security-score', array(
+            'timeout' => 60,
+            'headers' => array(
+                'Content-Type' => "multipart/form-data; boundary={$boundary}",
+            ),
+            'body' => $body,
+        ));
+
+        if (is_wp_error($response)) {
+            return false;
+        }
+
+        $result = json_decode(wp_remote_retrieve_body($response), true);
+        if (!isset($result['score'])) {
+            return false;
+        }
+
+        return array(
+            'score'         => (int) $result['score'],
+            'tier'          => sanitize_text_field($result['tier'] ?? 'UNKNOWN'),
+            'threats_found' => (int) ($result['threats_found'] ?? 0),
+        );
+    }
+
+    /**
+     * AJAX handler: return Security Integrity Score for an attachment.
+     * Called via wp_ajax_ips_security_score.
+     */
+    public function ajax_security_score() {
+        if (!check_ajax_referer('ips_nonce', 'nonce', false)) {
+            wp_send_json_error(array('message' => __('Security check failed', 'image-payload-scanner')));
+            wp_die();
+        }
+
+        if (!isset($_POST['attachment_id'])) {
+            wp_send_json_error(array('message' => __('No attachment ID provided', 'image-payload-scanner')));
+            wp_die();
+        }
+
+        $attachment_id = intval($_POST['attachment_id']);
+        $file_path = get_attached_file($attachment_id);
+
+        if (!$file_path || !file_exists($file_path)) {
+            wp_send_json_error(array('message' => __('Attachment file not found', 'image-payload-scanner')));
+            wp_die();
+        }
+
+        $score_data = $this->get_security_integrity_score($file_path);
+
+        if ($score_data === false) {
+            wp_send_json_error(array('message' => __('Could not fetch score from API', 'image-payload-scanner')));
+            wp_die();
+        }
+
+        // Persist score as post meta so it shows in the media library column
+        update_post_meta($attachment_id, '_ips_security_score', $score_data['score']);
+        update_post_meta($attachment_id, '_ips_security_tier', $score_data['tier']);
+        update_post_meta($attachment_id, '_ips_threats_found', $score_data['threats_found']);
+
+        wp_send_json_success($score_data);
+        wp_die();
+    }
+
+    /**
+     * Add a Security Score column to the media library list view.
+     */
+    public function add_media_column($columns) {
+        $columns['ips_score'] = __('Security Score', 'image-payload-scanner');
+        return $columns;
+    }
+
+    public function render_media_column($column_name, $post_id) {
+        if ($column_name !== 'ips_score') {
+            return;
+        }
+        $score = get_post_meta($post_id, '_ips_security_score', true);
+        $tier  = get_post_meta($post_id, '_ips_security_tier', true);
+
+        if ($score === '') {
+            echo '<span class="ips-score-unknown">—</span>';
+            echo '<button type="button" class="button button-small ips-score-btn" '
+               . 'data-attachment-id="' . esc_attr($post_id) . '">'
+               . esc_html__('Score', 'image-payload-scanner') . '</button>';
+            return;
+        }
+
+        $score = (int) $score;
+        $colour = $score >= 80 ? '#46b450' : ($score >= 60 ? '#ffb900' : '#dc3232');
+        echo '<span style="font-weight:bold; color:' . esc_attr($colour) . '">'
+           . esc_html($score) . '/100</span> '
+           . '<small>(' . esc_html($tier ?: 'UNKNOWN') . ')</small>';
+    }
+}
+
 // Initialize the plugin
 function ips_init() {
-    new Image_Payload_Scanner();
+    $plugin = new Image_Payload_Scanner();
+
+    // Wire up the media library column and the new AJAX action
+    add_filter('manage_media_columns',        array($plugin, 'add_media_column'));
+    add_action('manage_media_custom_column',  array($plugin, 'render_media_column'), 10, 2);
+    add_action('wp_ajax_ips_security_score',  array($plugin, 'ajax_security_score'));
 }
 add_action('plugins_loaded', 'ips_init');
