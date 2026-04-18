@@ -588,9 +588,225 @@ class ImageSecurityScanner:
             self.results['risk_level'] = 'High'
 ```
 
+## VLM-Specific Attack Techniques
+
+The following techniques specifically target Vision-Language Models (VLMs) and
+AI pipelines that consume images as input. They are distinct from classical
+image exploits: the goal is not to exploit a parser vulnerability but to
+influence the model's language output or downstream actions.
+
+---
+
+### 6. Polyglot Prompt Injection via PNG Metadata Chunks
+
+#### Mechanism
+
+PNG `tEXt` and `iTXt` chunks are key-value text fields that many VLM pipelines
+surface as contextual metadata. An attacker embeds an LLM instruction override
+in the `Comment`, `Description`, or `Author` field. If the pipeline appends
+exiftool output to the system prompt, the instruction is executed by the model.
+
+**Critical sanitization finding:** `ImageMagick -strip` does NOT remove `tEXt`
+chunks unless `png:exclude-chunk=tEXt,iTXt,zTXt` is explicitly defined. This
+means a large percentage of production sanitization pipelines are vulnerable.
+
+#### Implementation
+
+```python
+import struct, zlib
+
+def inject_png_prompt(png_bytes: bytes, instruction: str) -> bytes:
+    """Inject instruction into PNG tEXt Comment and Description fields."""
+    chunks = b""
+    for key in ("Comment", "Description"):
+        data = key.encode() + b"\x00" + instruction.encode("utf-8")
+        crc = zlib.crc32(b"tEXt" + data) & 0xFFFFFFFF
+        chunks += struct.pack(">I", len(data)) + b"tEXt" + data + struct.pack(">I", crc)
+    iend = png_bytes.rfind(b"IEND") - 4
+    return png_bytes[:iend] + chunks + png_bytes[iend:]
+```
+
+#### Detection
+
+```python
+def detect_prompt_injection_chunks(png_path: str) -> list:
+    """Return list of tEXt/iTXt chunks that contain instruction-like content."""
+    injection_keywords = [
+        "ignore", "system:", "you are", "do not", "output:", "disregard",
+        "assistant:", "from now on", "roleplay", "jailbreak"
+    ]
+    suspicious = []
+    with open(png_path, "rb") as f:
+        data = f.read()
+    if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return suspicious
+    pos = 8
+    while pos + 12 <= len(data):
+        length = int.from_bytes(data[pos:pos+4], "big")
+        ctype = data[pos+4:pos+8]
+        cdata = data[pos+8:pos+8+length]
+        if ctype in (b"tEXt", b"iTXt", b"zTXt"):
+            text = cdata.decode("utf-8", errors="replace").lower()
+            if any(kw in text for kw in injection_keywords):
+                suspicious.append({"type": ctype.decode(), "content": text[:200]})
+        pos += 12 + length
+    return suspicious
+```
+
+---
+
+### 7. OCR-Exploitable Invisible Typography
+
+#### Mechanism
+
+VLMs with OCR capability process pixel-level text before generating responses.
+Text rendered at or below the human Just Noticeable Difference (JND) threshold
+(contrast delta ≈ 2–3 luminance units) is invisible to human viewers but
+readable by models that apply histogram equalization or per-channel enhancement
+during OCR preprocessing.
+
+Four invisibility techniques, in order of VLM detectability:
+
+| Technique | Contrast Delta | Visibility | VLM Read Rate (lab) |
+|-----------|---------------|------------|---------------------|
+| Near-zero contrast | Δ=2 (lum) | Invisible | ~35% |
+| Micro-typography (2px) | Normal | Invisible | ~25% |
+| Channel-isolated (blue) | Opacity=15 | Invisible | ~40% |
+| QR-style opacity | 15/255 | Invisible | ~20% |
+
+#### Implementation (channel-isolated example)
+
+```python
+from PIL import Image, ImageDraw
+import numpy as np, io
+
+def channel_isolated_injection(png_bytes: bytes, instruction: str) -> bytes:
+    img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    # Write in blue channel at near-zero opacity
+    draw.text((4, 4), instruction[:150], fill=(0, 0, 255, 15))
+    arr = np.array(img)
+    ov = np.array(overlay)
+    mask = ov[:, :, 3] > 0
+    arr[mask, 2] = np.clip(arr[mask, 2].astype(int) + 30, 0, 255).astype(np.uint8)
+    buf = io.BytesIO()
+    Image.fromarray(arr, "RGBA").convert("RGB").save(buf, format="PNG")
+    return buf.getvalue()
+```
+
+#### Detection
+
+```python
+def detect_channel_isolated_text(image_path: str) -> dict:
+    """
+    Check for suspiciously low-variance blue channel regions that may
+    contain invisible typography.
+    """
+    from PIL import Image
+    import numpy as np
+
+    img = Image.open(image_path).convert("RGB")
+    arr = np.array(img, dtype=np.float32)
+    b_channel = arr[:, :, 2]
+    # Histogram-equalize blue channel and look for text-like entropy
+    b_norm = (b_channel - b_channel.min()) / (b_channel.ptp() + 1e-6) * 255
+    local_variance = float(b_norm.var())
+    return {
+        "blue_channel_variance": round(local_variance, 2),
+        "suspicious": local_variance < 200 and local_variance > 5,
+        "note": "Low variance in blue channel may indicate channel-isolated injection"
+    }
+```
+
+---
+
+### 8. Adversarial Perturbations — VLM Semantic Manipulation
+
+#### Mechanism
+
+Frequency-domain adversarial noise (L∞ ε=4/255) is imperceptible to humans
+(PSNR > 38 dB) but shifts the model's feature representation enough to alter
+its semantic output. In content moderation pipelines this can cause policy-
+violating content to be described as benign. In classification tasks it can
+cause deliberate misidentification.
+
+**Key property:** Adversarial perturbations are VALID PIXEL VALUES. No
+sanitization that preserves visual content can remove them. This is a
+fundamental limitation of sanitization-based defenses.
+
+#### Implementation
+
+```python
+import numpy as np
+from PIL import Image
+import io
+
+def frequency_domain_perturbation(img_array: np.ndarray, eps: float = 4/255) -> np.ndarray:
+    """High-frequency adversarial noise approximation."""
+    result = img_array.astype(np.float32).copy()
+    h, w = result.shape[:2]
+    cy, cx = h // 2, w // 2
+    r = min(cy, cx) // 3  # preserve low-frequency content
+    for c in range(3):
+        fft = np.fft.fft2(result[:, :, c])
+        mask = np.array([
+            [0.0 if (y-cy)**2 + (x-cx)**2 <= r**2 else 1.0
+             for x in range(w)]
+            for y in range(h)
+        ])
+        noise = np.real(np.fft.ifft2(fft * mask))
+        result[:, :, c] = np.clip(result[:, :, c] + np.sign(noise) * eps * 255, 0, 255)
+    return result.astype(np.uint8)
+```
+
+#### Detection
+
+No reliable pixel-level detection. Ensemble defense:
+```python
+def ensemble_classify(image_path: str, models: list) -> dict:
+    """Flag divergence between models as a signal of adversarial input."""
+    results = [m.predict(image_path) for m in models]
+    labels = [r["label"] for r in results]
+    consensus = len(set(labels)) == 1
+    return {
+        "consensus": consensus,
+        "labels": labels,
+        "adversarial_suspicion": not consensus
+    }
+```
+
+---
+
+### 9. Sanitization Bypass Findings (Red-vs-Blue Test Results)
+
+The `RedBlueTester` class in `ipi/sanitizer.py` automates a full
+technique × pipeline bypass matrix. Key empirical findings:
+
+| Technique | IM -strip | IM full | Pillow re-encode | Pillow no-exif |
+|-----------|-----------|---------|-----------------|----------------|
+| EXIF UserComment | REMOVED | REMOVED | **SURVIVES** | REMOVED |
+| PNG tEXt chunks | **SURVIVES** | REMOVED | **SURVIVES** | **SURVIVES** |
+| PNG iiPj polyglot | REMOVED | REMOVED | **SURVIVES** | **SURVIVES** |
+| Invisible contrast text | **SURVIVES** | **SURVIVES** | **SURVIVES** | **SURVIVES** |
+| Micro-typography | **SURVIVES** | **SURVIVES** | **SURVIVES** | **SURVIVES** |
+| Channel-isolated | **SURVIVES** | **SURVIVES** | **SURVIVES** | **SURVIVES** |
+| Adversarial perturbation | **SURVIVES** | **SURVIVES** | **SURVIVES** | **SURVIVES** |
+
+**Takeaway:** A defense-in-depth approach is required. No single sanitization
+step removes all VLM attack vectors. Combine full ImageMagick strip with
+JPEG recompression for metadata attacks, and use ensemble inference for
+pixel-level attacks.
+
+---
+
 ## Next Steps
 
 Understanding these payload techniques and detection methods provides a foundation for developing effective security practices. Continue to [Defense Best Practices](04-defense-practices.md) to learn how to protect systems and users from these threats.
+
+For AI-specific threat modeling, see [THREAT_MODEL.md](THREAT_MODEL.md).
+
+For structured vulnerability case studies, see [VULNERABILITY_CASE_STUDIES.md](VULNERABILITY_CASE_STUDIES.md).
 
 ---
 
