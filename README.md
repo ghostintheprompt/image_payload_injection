@@ -1,4 +1,6 @@
-<img src="image_payload_injection.webp" width="200">
+<p align="center">
+  <img src="image_payload_injection.webp" width="520">
+</p>
 
 # Image Payload Injection
 Every image accepts data beyond pixels. EXIF metadata. ICC profiles. Thumbnail caches. Steganographic channels. — v1.0
