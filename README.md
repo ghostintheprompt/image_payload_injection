@@ -1,5 +1,9 @@
 # Image Payload Injection
 
+<div align="center">
+  <img src="image_payload_injection.png" width="256" height="256" alt="Image Payload Injection Icon" />
+</div>
+
 Every image accepts data beyond pixels. EXIF metadata. ICC profiles. Thumbnail caches. Steganographic channels.
 
 **Every parser = potential exploit.**
