@@ -115,6 +115,16 @@ class ImageSecurityAnalyzer:
         self.file_size = os.path.getsize(image_path)
         self.thread_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
         
+        with open(self.image_path, 'rb') as f:
+            self.image_data = f.read()
+        
+        try:
+            self.image = Image.open(io.BytesIO(self.image_data))
+            # Load the image to ensure it's fully read
+            self.image.load()
+        except Exception:
+            self.image = None
+        
         # Initialize results structure
         self.results = {
             'file_info': {},
@@ -167,6 +177,7 @@ class ImageSecurityAnalyzer:
             detection_futures.append(self.thread_pool.submit(self._detect_steganography))
             detection_futures.append(self.thread_pool.submit(self._analyze_color_histograms))
             detection_futures.append(self.thread_pool.submit(self._perform_ml_analysis))
+            detection_futures.append(self.thread_pool.submit(self._detect_vlm_attacks))
             
             # Wait for all detection methods to complete
             for future in concurrent.futures.as_completed(detection_futures):
@@ -369,7 +380,11 @@ class ImageSecurityAnalyzer:
                             (r'(?i)data:', 'Data URI'),
                             (r'(?i)0x[0-9a-f]{6,}', 'Long hex sequence'),
                             (r'(?i)http', 'URL reference'),
-                            (r'(?i)\\x[0-9a-f]{2}', 'Hex escape sequences')
+                            (r'(?i)\\x[0-9a-f]{2}', 'Hex escape sequences'),
+                            (r'(?i)ignore\s+previous', 'Prompt Injection (VLM)'),
+                            (r'(?i)system:', 'Prompt Injection (VLM)'),
+                            (r'(?i)override', 'Prompt Injection (VLM)'),
+                            (r'(?i)\[inst\]', 'Prompt Injection (VLM)')
                         ]
                         
                         matches = []
@@ -408,6 +423,9 @@ class ImageSecurityAnalyzer:
                             r'(?i)<.*>',  # Potential HTML/XML/script tags
                             r'(?i)data:',  # Data URIs
                             r'(?i)0x[0-9a-f]{6,}',  # Long hex sequences
+                            r'(?i)ignore previous',  # VLM Prompt Injection
+                            r'(?i)system:',          # VLM Prompt Injection
+                            r'(?i)override',         # VLM Prompt Injection
                         ]
                         
                         for pattern in patterns:
@@ -695,18 +713,37 @@ class ImageSecurityAnalyzer:
                 chunk_type = self.image_data[pos+4:pos+8]
                 
                 # Check for unusual or custom chunks
-                if chunk_type not in standard_chunks:
+                if chunk_type == b'iiPj':
+                    suspicious_chunks.append(f"Polyglot JSON Chunk (iiPj) detected")
+                elif chunk_type not in standard_chunks:
                     suspicious_chunks.append(f"Non-standard chunk: {chunk_type.decode('ascii', errors='ignore')}")
                 
                 # For text chunks, check content
                 if chunk_type in (b'tEXt', b'zTXt', b'iTXt'):
                     chunk_data = self.image_data[pos+8:pos+8+length]
-                    suspicious_patterns = [b'script', b'exec', b'eval', b'<', b'0x', b'data:']
+                    suspicious_patterns = [
+                        b'script', b'exec', b'eval', b'<', b'0x', b'data:',
+                        b'ignore previous', b'system:', b'you are', b'override'
+                    ]
                     
+                    # Check plain chunk data
                     for pattern in suspicious_patterns:
                         if pattern in chunk_data.lower():
-                            suspicious_chunks.append(f"Suspicious content in {chunk_type.decode('ascii', errors='ignore')} chunk")
+                            suspicious_chunks.append(f"Suspicious VLM/Script content in {chunk_type.decode('ascii', errors='ignore')} chunk")
                             break
+                    
+                    # Try to hex decode looking for obfuscated payloads (like raw EXIF in tEXt)
+                    try:
+                        # Extract potential hex strings
+                        hex_strings = re.findall(rb'[0-9a-fA-F]{30,}', chunk_data)
+                        for hex_str in hex_strings:
+                            decoded = bytes.fromhex(hex_str.decode('ascii'))
+                            for pattern in suspicious_patterns:
+                                if pattern in decoded.lower():
+                                    suspicious_chunks.append(f"Suspicious VLM/Script hex-encoded content in {chunk_type.decode('ascii', errors='ignore')} chunk")
+                                    break
+                    except Exception:
+                        pass
                 
                 # Move to next chunk
                 pos += length + 12  # Length(4) + Type(4) + Data(length) + CRC(4)
@@ -1395,6 +1432,60 @@ class ImageSecurityAnalyzer:
                 logger.error(f"Error in ML analysis: {str(e)}")
                 logger.error(traceback.format_exc())
             self.results['threats']['ml_detection'] = (False, None)
+
+    def _detect_vlm_attacks(self) -> None:
+        """
+        Detect VLM-specific attacks including channel-isolated text, typography exploits,
+        and high-frequency adversarial perturbations.
+        """
+        suspicious = False
+        details_list = []
+        
+        if PILLOW_AVAILABLE and OPENCV_AVAILABLE and 'numpy' in sys.modules:
+            try:
+                img = cv2.imread(self.image_path)
+                if img is not None:
+                    # 1. Detect Channel-isolated typography (blue channel variance)
+                    b_channel = img[:, :, 0].astype(np.float32)  # cv2 is BGR
+                    channel_range = b_channel.max() - b_channel.min()
+                    b_norm = (b_channel - b_channel.min()) / (channel_range + 1e-6) * 255
+                    local_variance = float(b_norm.var())
+                    
+                    # Blue channel with variance between 5 and 500 often indicates channel-isolated typography
+                    if 5 < local_variance < 500:
+                        suspicious = True
+                        details_list.append(f"Low variance in blue channel (var: {local_variance:.2f}) indicates potential channel-isolated typography (VLM exploit)")
+
+                    # 2. Detect high-frequency adversarial noise (frequency-domain perturbation)
+                    # Convert to grayscale for frequency analysis
+                    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY).astype(np.float32)
+                    fft = np.fft.fft2(gray)
+                    fft_shifted = np.fft.fftshift(fft)
+                    magnitude_spectrum = 20 * np.log(np.abs(fft_shifted) + 1e-6)
+                    
+                    h, w = gray.shape
+                    cy, cx = h // 2, w // 2
+                    y_idx, x_idx = np.ogrid[:h, :w]
+                    dist = np.sqrt((y_idx - cy) ** 2 + (x_idx - cx) ** 2)
+                    
+                    # Look at high frequency band
+                    high_freq_mask = ((dist >= min(h, w) * 0.3) & (dist <= min(h, w) * 0.45))
+                    high_freq_energy = np.mean(magnitude_spectrum[high_freq_mask])
+                    
+                    # Look at low frequency band for baseline
+                    low_freq_mask = (dist < min(h, w) * 0.1)
+                    low_freq_energy = np.mean(magnitude_spectrum[low_freq_mask])
+                    
+                    # If high frequency energy is unusually close to low frequency, it suggests structured high-freq noise
+                    if high_freq_energy > (low_freq_energy * 0.6):
+                        suspicious = True
+                        details_list.append(f"Anomalous high-frequency energy detected (HF/LF ratio: {high_freq_energy/low_freq_energy:.2f}). Indicates possible adversarial perturbation")
+                        
+            except Exception as e:
+                logger.error(f"Error in VLM attack detection: {str(e)}")
+                
+        self.results['threats']['vlm_attacks'] = (suspicious, ", ".join(details_list) if suspicious else None)
+
 
     def _determine_risk_level(self) -> None:
         """
