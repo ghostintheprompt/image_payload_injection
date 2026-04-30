@@ -96,7 +96,7 @@
         "ALL PIPELINES (valid pixel data \u2014 survives every sanitization)"
       ],
       "perceptible_to_humans": false,
-      "size_bytes": 46970
+      "size_bytes": 46953
     },
     {
       "filename": "10_vit_checkerboard.png",
