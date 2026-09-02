@@ -24,8 +24,8 @@ Every image accepts data beyond pixels. EXIF metadata. ICC profiles. Thumbnail c
 ## Installation
 
 ```bash
-git clone https://github.com/ghostintheprompt/image-payload-injection
-cd image-payload-injection
+git clone https://github.com/ghostintheprompt/image_payload_injection
+cd image_payload_injection
 pip install -r requirements.txt
 ```
 
@@ -273,7 +273,7 @@ MIT License. Educational purposes only.
 
 ---
 
-**[github.com/ghostintheprompt/image-payload-injection](https://github.com/ghostintheprompt/image-payload-injection)**
+**[github.com/ghostintheprompt/image_payload_injection](https://github.com/ghostintheprompt/image_payload_injection)**
 
 Metadata injection. Steganography. Parser exploits.
 
