@@ -1,280 +1,99 @@
 <p align="center">
-  <img src="image_payload_injection.webp" width="520">
+  <img src="image_payload_injection.png" width="520">
 </p>
 
 # Image Payload Injection
-Every image accepts data beyond pixels. EXIF metadata. ICC profiles. Thumbnail caches. Steganographic channels. — v1.0
 
-**Every parser = potential exploit.**
+An image carries more than pixels: EXIF and XMP metadata, ancillary PNG chunks,
+appended trailing data, LSB steganographic channels, and perturbations or
+hidden text aimed at the model that reads it. This toolkit scans images for
+those payloads, sanitizes them, and generates controlled adversarial images for
+research against vision-language models.
 
----
+It is a defensive scanner and sanitizer with an offensive-research module for
+the VLM angle. It does not exploit image-parser memory-safety bugs, and it ships
+no such code.
 
-## What It Does
+## What it does
 
-**Metadata injection:** Arbitrary code in EXIF fields. Most apps parse without validation.
+- **Analyze** (`ipi/analyzer.py`): a multi-signal `ImageSecurityAnalyzer` that
+  flags injected/suspicious metadata, anomalous PNG chunks, appended trailing
+  data, polyglot structures, LSB-steganography distribution anomalies, and
+  high-frequency perturbation energy consistent with a VLM adversarial image.
+  Signals are heuristic and tuned sensitive; it returns a per-signal report and
+  a risk level, not a verdict to act on blindly.
+- **Sanitize** (`ipi/sanitizer.py`): `ImageSanitizer` strips metadata and
+  ancillary chunks and re-encodes, with a stricter `--web` profile and batch
+  mode. It removes the metadata/chunk class of payload; it does not claim to
+  scrub pixel-level stego, and the analyzer's conservative heuristics may still
+  flag a re-encoded file.
+- **Generate adversarial images for research** (`ipi/vlm_adversarial.py`):
+  near-zero-contrast text, micro-typography, channel-isolated text, QR-style
+  opacity text, Gaussian-noise and checkerboard perturbations, and EXIF
+  UserComment injection. These model image-borne prompt injection against a
+  vision-language model, for testing your own models.
+- **Web interface** (`ipi/web_interface.py`) and a **WordPress scan plugin**
+  (`ipi/integrations/wordpress-plugin/`) for upload-path integration.
 
-**Steganography:** Hide payloads in pixel data. LSB manipulation. Invisible to eye, readable by decoder.
-
-**Parser exploits:** Buffer overflows in libpng, libjpeg, RAW parsers. Legacy C/C++ code.
-
-**Polyglot files:** Valid image + valid script. Dual-format attacks.
-
----
-
-## Installation
+## Install
 
 ```bash
 git clone https://github.com/ghostintheprompt/image_payload_injection
 cd image_payload_injection
-pip install -r requirements.txt
+pip install -r requirements.txt   # Pillow, numpy, opencv-python; rawpy/scikit-learn optional
 ```
 
-**Requirements:**
-- Python 3.8+
-- PIL/Pillow
-- numpy, opencv-python
-- Optional: rawpy (RAW analysis), scikit-learn (ML detection)
-
----
-
-## Quick Start
-
-**Analyze image:**
-```bash
-ipi scan suspicious_image.jpg
-```
-
-**Inject metadata payload:**
-```python
-from ipi import ImageAnalyzer
-
-analyzer = ImageAnalyzer('target.jpg')
-analyzer.inject_exif('Artist', '<script>payload</script>')
-analyzer.save('weaponized.jpg')
-```
-
-**Extract hidden data:**
-```python
-from ipi import ImageAnalyzer
-
-analyzer = ImageAnalyzer('innocent.png')
-hidden = analyzer.extract_steganography()
-```
-
----
-
-## Features
-
-### Metadata Injection
-EXIF fields accept arbitrary data. Artist field often displayed by galleries. Comment field parsed by AI analyzers.
-
-```python
-# Inject into EXIF
-exif[0x013B] = "'; DROP TABLE users; --"
-exif[0x9286] = "<script>fetch('attacker.com')</script>"
-```
-
-Social platforms display photographer credits without sanitization. AI content analyzers trust Comment field input.
-
-### Steganography
-Hide data in image pixels. Least significant bit manipulation.
-
-```python
-# LSB steganography
-from ipi import StegoHide
-
-stego = StegoHide('cover.png')
-stego.hide_data('ssh root@server.com -p 2222')
-stego.save('shared_on_social.png')
-```
-
-**Use cases:**
-- Exfiltrate data through firewalls
-- C2 channels via public images
-- Watermark bypass
-
-### Parser Exploits
-Image parsers are complex C/C++ codebases. Buffer overflows. Integer overflows. Heap corruption.
-
-**PNG chunk overflow:**
-```
-Normal chunk: [Length: 13][Type: IHDR][Data: 13 bytes]
-Malicious:    [Length: 13][Type: IHDR][Data: 5000 bytes]
-                                        ↑ Buffer overflow
-```
-
-Parser allocates 13 bytes. Reads 5000. Overflows buffer. Code execution.
-
-**RAW parsers worse:**
-- Proprietary formats (CR2, NEF, ARW)
-- Less scrutiny than JPEG/PNG
-- Trusted by professionals
-- Parsed by Lightroom, Photoshop, Bridge
-
-### Detection Capabilities
-- SVG JavaScript analysis
-- RAW file tampering detection
-- Color histogram anomaly detection
-- ML-based pattern recognition
-- Format structure validation
-
----
-
-## Attack Vectors
-
-### Social Media
-Images bypass content filters. Look innocent. Reach millions.
-
-Platforms strip some metadata. Keep some. Transform through parsers. All attack surface.
-
-### AI Training Datasets
-Scraped web images. Millions ingested without sanitization. Poison the dataset. Affect model behavior.
-
-### E-commerce/Dating Apps
-Product photos. Profile pictures. All parsed. All transformed. C2 channels hidden in plain sight.
-
-### Photography Workflows
-50MB+ RAW files. 500+ per shoot. Sent to retouchers. Published to agencies. Archived in cloud. Parsed automatically.
-
-One weaponized RAW in batch of 500. Gets processed. No validation.
-
----
-
-## For Red Teams
-
-Test image upload endpoints. Check metadata survival. Look for parser versions.
-
-RAW files get less scrutiny than JPEGs. Proprietary formats. Complex parsers. High-value targets.
-
-**Integration:**
-```bash
-# Scan upload endpoint
-ipi scan --url https://target.com/upload
-
-# Generate weaponized image
-ipi create --payload xss --output weaponized.jpg
-
-# Test parser
-ipi fuzz --parser /usr/lib/libpng.so
-```
-
----
-
-## For Blue Teams
-
-Strip all metadata before publishing. Validate dimensions vs file size. Sandbox image processing.
-
-Multi-layer detection: content + timing + volume + protocol analysis.
-
-**Defense:**
-```bash
-# Sanitize image
-ipi sanitize input.jpg --output clean.jpg
-
-# Batch scan
-ipi scan --directory ./uploads --recursive
-
-# CMS integration
-ipi wordpress-scan --library /var/www/wp-content/uploads
-```
-
----
-
-## Web Interface
-
-Browser-based analysis and sanitization:
+## Quick start
 
 ```bash
-python -m ipi.web_interface
-# Access: http://localhost:5000
+# Scan an image. Prints a JSON threat report and a risk level.
+python3 ipi/analyzer.py test_images/04_polyglot_iipj.png
+
+# Sanitize: strip metadata and suspicious chunks, re-encode to a clean file.
+python3 ipi/sanitizer.py suspicious.png -o cleaned.png
+python3 ipi/sanitizer.py uploads/ --batch --web -o cleaned/   # batch, web-strict
+
+# Local web UI.
+python3 ipi/web_interface.py --port 5000   # http://127.0.0.1:5000
 ```
 
-Features:
-- Real-time visualization
-- Risk assessment reports
-- Batch processing
-- CMS integration
+On the bundled polyglot fixture the analyzer reports the `iiPj` polyglot chunk,
+a suspicious LSB distribution, and adversarial high-frequency energy, at risk
+level High. The `test_images/` fixtures are generated by
+`generate_test_images.py` and are the only images this repo ships.
 
----
+## The VLM angle
 
-## Technical Details
+The part worth the most attention is not the metadata, it is the agent. A
+vision-language model that reads an uploaded image will read text a human
+cannot see: a caption at near-zero contrast, text isolated in one color
+channel, a payload in the EXIF UserComment a model summarizes. That is image-
+borne indirect prompt injection, and `vlm_adversarial.py` generates those
+images so you can test whether your own model pipeline treats what it sees in a
+picture as instructions. Generate them against models you own.
 
-**Supported formats:**
-- JPEG (EXIF, JFIF, IPTC)
-- PNG (chunk manipulation, tEXt/zTXt)
-- TIFF (IFD structure exploits)
-- RAW (CR2, NEF, ARW metadata)
-- GIF (comment block injection)
-- SVG (JavaScript detection)
-- WebP, AVIF (modern formats)
+## Detection methods
 
-**Attack techniques:**
-- LSB steganography
-- EXIF injection
-- Chunk overflow
-- Polyglot files
-- ICC profile injection
+Metadata and EXIF/XMP inspection, PNG/JPEG chunk and marker analysis, trailing-
+data checks, polyglot-signature detection, per-channel LSB distribution and bit
+entropy, and a high-frequency energy ratio for adversarial perturbation. All
+heuristic. A positive is a reason to look, not proof, and the analyzer says so
+in its own output.
 
-**Detection methods:**
-- Format structure validation
-- Statistical anomaly detection
-- ML-based pattern matching
-- Metadata forensics
+## Scope and honesty
 
----
+- This repo detects and sanitizes image payloads and generates adversarial
+  images for research. It does **not** contain image-parser memory-corruption
+  exploits (libpng/libjpeg/RAW buffer overflows), and the README does not claim
+  it does. Those are a real class, named in the docs as context, not shipped as
+  code here.
+- Detection is heuristic and will produce false positives, especially on
+  synthetic or heavily re-encoded images. The signals are inputs to a review.
+- Every bundled image is synthetic, generated by this repo. No third-party
+  image, site, or model is touched.
 
-## Use Cases
-
-**Authorized pentesting:** Client networks with image processing. Test upload endpoints. Parser version disclosure.
-
-**Security research:** Parser vulnerability discovery. Format specification analysis. Detection bypass techniques.
-
-**Defense development:** Blue team training. Understanding attacker techniques. Building better detection.
-
----
-
-## Don't Be Stupid
-
-**Unauthorized use = federal prison.** CFAA violation. Real consequences.
-
-**No authorization = don't use this tool.** Period.
-
-For red teams testing defenses. Not criminals.
-
-You need: Written authorization. Defined scope. Professional engagement or research environment.
-
----
-
-## Why This Exists
-
-Fashion photographers send RAW files everywhere. Email. WeTransfer. Dropbox. Clients parse blindly.
-
-Built this after watching the same files that document fabric potentially document infrastructure.
-
-Images are data structures parsed by code. Code has bugs. Bugs become exploits.
-
----
-
-## Latest Updates (Feb 2026)
-
-- Python 3.13 compatibility
-- Enhanced SVG JavaScript detection
-- RAW file deep analysis
-- ML-based anomaly detection
-- WordPress plugin integration
-- Expanded format support (WebP, AVIF)
-- Real-time web interface
-
----
+## Use only on images, systems, and models you own or are authorized to test.
 
 ## License
 
-MIT License. Educational purposes only.
-
----
-
-**[github.com/ghostintheprompt/image_payload_injection](https://github.com/ghostintheprompt/image_payload_injection)**
-
-Metadata injection. Steganography. Parser exploits.
-
-Authorized pentests only. Written permission required. Don't be stupid.
+MIT. See [LICENSE](LICENSE).
