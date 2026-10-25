@@ -14,6 +14,22 @@ It is a defensive scanner and sanitizer with an offensive-research module for
 the VLM angle. It does not exploit image-parser memory-safety bugs, and it ships
 no such code.
 
+## RedBlueTester measurement scope — repaired October 24, 2026
+
+The former matrix's general bypass/removal claims are withdrawn. Its checker assigned perturbation survival unconditionally and used byte-search absence to infer rendered-text removal. A clean image and a visible-text control exposed both problems. Pipeline failures could also return the original input silently.
+
+The repaired harness measures the full literal UTF-8 marker for metadata techniques, reports pixel techniques as unknown, and records decoded RGB equality separately. ImageMagick command failures/missing output and Pillow errors propagate into explicit error cells. Unchanged generator output is unconfirmed, not a successful constructed fixture. No target model is queried.
+
+The matrix exposes `retained_markers`, per-cell status and `pipeline_success`, and `model_tested: false`. `critical_bypasses` remains a deprecated empty list for API compatibility. Text reports say MARKER FOUND / MARKER NOT FOUND / UNKNOWN / ERROR. No severity is assigned automatically, and marker absence is not a safety verdict.
+
+Nine regression tests pass. An actual four-pipeline run with a benign marker gives 12 literal-marker-not-found cells and 16 unknown pixel-technique cells, with no errors. Historical model-success figures elsewhere in the documentation are not revalidated by this run. See the [corrected report](https://www.ghostintheprompt.com/articles/engagement-report-image-payload-injection).
+
+```bash
+python3 -m unittest discover -s tests -p 'test_red_blue_measurements.py' -v
+```
+
+Requires Pillow; the actual four-pipeline run also requires ImageMagick and NumPy. The fixture-based regression controls do not measure OCR readability or model-level attack success.
+
 ## What it does
 
 - **Analyze** (`ipi/analyzer.py`): a multi-signal `ImageSecurityAnalyzer` that
